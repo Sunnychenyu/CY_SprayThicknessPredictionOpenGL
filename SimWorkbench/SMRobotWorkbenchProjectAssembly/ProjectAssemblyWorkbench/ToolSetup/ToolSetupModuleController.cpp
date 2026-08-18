@@ -19,7 +19,7 @@
 
 #include <QApplication>
 #include <QByteArray>
-#include <QFileDialog>
+#include <RobotQtViewerFileDialog.h>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QStringList>
@@ -753,7 +753,7 @@ namespace robot_qt_viewer
 
     void ToolSetupModuleController::importToolAsset()
     {
-        const QString fileName = QFileDialog::getOpenFileName(
+        const QString fileName = robot_qt_viewer::getOpenFileName(
             &m_widget,
             "Import tool model",
             QString(),

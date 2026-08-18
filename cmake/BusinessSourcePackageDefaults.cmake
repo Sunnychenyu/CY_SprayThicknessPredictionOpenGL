@@ -19,6 +19,8 @@ if((NOT DEFINED PREBUILD_DIR OR PREBUILD_DIR STREQUAL "")
     set(PREBUILD_DIR "$ENV{RS2026_EXTERNAL_PREBUILD_ROOT}" CACHE PATH
         "External Windows Qt/OMPL dependency root.")
 endif()
+set(SMROBOT_BUSINESS_SOURCE_PACKAGE ON)
+set(SMROBOT_PACKAGED_LICENSE_DIR "${_smrobot_business_source_root}/license")
 
 # Common, Core and Platform are consumed from the exported SDK in a Business Source package.
 set(UsingPrebuilt_Common ON CACHE BOOL "Use prebuilt Common package." FORCE)

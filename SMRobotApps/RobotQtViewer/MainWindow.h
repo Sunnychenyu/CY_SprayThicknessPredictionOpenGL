@@ -50,11 +50,8 @@ class ToolSetupWidget;
 namespace robot_qt_viewer
 {
     class CollisionWorkbenchModuleController;
-    class CoatingAnalysisInfoPanel;
     class CoatingAnalysisModuleController;
     class CoatingAnalysisPanel;
-    class CoatingAnalysisTreePanel;
-    class CoatingAnalysisVisibilityBar;
     class MotionControlModuleController;
     class MotionPlanningModuleController;
     class RobotQtViewerCollisionWorkbenchServicesAdapter;
@@ -62,6 +59,7 @@ namespace robot_qt_viewer
     class RobotQtViewerToolbarController;
     class RobotQtViewerToolSetupAppServicesAdapter;
     class RobotQtViewerViewportEventController;
+    class RobotQtViewerViewportPresentationController;
     class RobotQtViewerViewportServicesAdapter;
     class SceneExplorerModuleController;
     class ThicknessLegendWidget;
@@ -103,6 +101,8 @@ private:
     void createCameraViewOverlay();
     void showCameraViewPalette();
     void updateCameraViewOverlayGeometry();
+    void setViewportPresentationMode(bool active);
+    void updateViewportPresentationAction();
     void updateThicknessLegendOverlayGeometry();
     void createPanels();
     void applyInitialPanelLayout();
@@ -110,8 +110,6 @@ private:
     void updateWorkbenchActions();
     void setRobotRunDetailsRequested(bool requested);
     void updateRobotRunDetailsDockVisibility();
-    void updateCoatingAnalysisVisibility();
-    void updateCoatingVisibilityOverlayGeometry();
     void updateTaskPanel();
     void newProject();
     void openProject();
@@ -194,6 +192,8 @@ private:
     std::unique_ptr<robot_qt_viewer::RobotQtViewerToolSetupAppServicesAdapter> m_toolSetupServices;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerCollisionWorkbenchServicesAdapter> m_collisionWorkbenchServices;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerSceneExplorerActionRouter> m_sceneExplorerActionRouter;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerViewportPresentationController>
+        m_viewportPresentationController;
     robot_qt_viewer::RobotQtViewerViewportEventController* m_viewportEventController = nullptr;
     robot_qt_viewer::LanguageKind m_language = robot_qt_viewer::LanguageKind::English;
     QMenu* m_fileMenu = nullptr;
@@ -202,11 +202,9 @@ private:
     QMenu* m_themeMenu = nullptr;
     QMenu* m_languageMenu = nullptr;
     QMenu* m_cameraViewMenu = nullptr;
-    QMenu* m_projectionModeMenu = nullptr;
     QDockWidget* m_sceneExplorerDock = nullptr;
     QDockWidget* m_taskPanelDock = nullptr;
     QDockWidget* m_bottomPanelDock = nullptr;
-    QDockWidget* m_coatingAnalysisTreeDock = nullptr;
     robot_qt_viewer::RobotQtViewerToolbarController* m_toolbarController = nullptr;
     QHash<QString, QAction*> m_themeActions;
     QHash<QString, QAction*> m_languageActions;
@@ -230,8 +228,7 @@ private:
     QAction* m_deleteRobotAction = nullptr;
     QAction* m_saveImageAction = nullptr;
     QAction* m_resetCameraAction = nullptr;
-    QAction* m_perspectiveProjectionAction = nullptr;
-    QAction* m_orthographicProjectionAction = nullptr;
+    QAction* m_viewportPresentationAction = nullptr;
     QAction* m_collisionGeometryAction = nullptr;
     QAction* m_collisionQueriesAction = nullptr;
     QAction* m_robotRunDetailsAction = nullptr;
@@ -258,9 +255,6 @@ private:
     CollisionWorkbenchPanel* m_collisionWorkbenchPanel = nullptr;
     robot_qt_viewer::CollisionWorkbenchModuleController* m_collisionWorkbenchController = nullptr;
     robot_qt_viewer::CoatingAnalysisPanel* m_coatingAnalysisPanel = nullptr;
-    robot_qt_viewer::CoatingAnalysisTreePanel* m_coatingAnalysisTreePanel = nullptr;
-    robot_qt_viewer::CoatingAnalysisInfoPanel* m_coatingAnalysisInfoPanel = nullptr;
-    robot_qt_viewer::CoatingAnalysisVisibilityBar* m_coatingAnalysisVisibilityBar = nullptr;
     robot_qt_viewer::CoatingAnalysisModuleController* m_coatingAnalysisController = nullptr;
     QStackedWidget* m_taskPanelStack = nullptr;
     QWidget* m_sceneExplorerTaskPanel = nullptr;

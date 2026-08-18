@@ -27,6 +27,7 @@ namespace robot_qt_viewer
         sceneEditGroup.actions = {
             { QStringLiteral("importRobot"), QStringLiteral("list-add"), QStyle::SP_ComputerIcon },
             { QStringLiteral("importObject"), QStringLiteral("insert-object"), QStyle::SP_DirIcon },
+            { QStringLiteral("importPointCloud"), QStringLiteral("document-import"), QStyle::SP_FileIcon },
             { QStringLiteral("deleteSelectedItem"), QStringLiteral("edit-delete"), QStyle::SP_TrashIcon }
         };
 

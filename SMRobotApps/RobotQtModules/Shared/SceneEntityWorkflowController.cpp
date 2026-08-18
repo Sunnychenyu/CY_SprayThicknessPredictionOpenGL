@@ -7,9 +7,11 @@
 #include <SimulationProject/ProjectDocumentService.h>
 #include <SimulationProject/ProjectSceneEntityCommands.h>
 #include <SimulationProject/ProjectSession.h>
+#include <RobotIO/IRobotLoader.h>
 
 #include <cmath>
 #include <cctype>
+#include <exception>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -156,6 +158,26 @@ namespace
             nearlyEqual(lhs.pitch, rhs.pitch) &&
             nearlyEqual(lhs.yaw, rhs.yaw);
     }
+
+    bool isSimscapeSourceType(const std::string& sourceType)
+    {
+        return lowercaseAscii(sourceType) == "simscape";
+    }
+
+    std::string modelDisplayName(
+        const std::string& sourceName,
+        const robot::RobotModel& model,
+        std::size_t modelIndex,
+        std::size_t modelCount)
+    {
+        if(modelCount <= 1) {
+            return sourceName;
+        }
+        const std::string modelName = model.name.empty()
+            ? std::string("model_") + std::to_string(modelIndex + 1)
+            : model.name;
+        return sourceName + "_" + modelName;
+    }
 }
 
 namespace robot_qt_viewer
@@ -174,26 +196,63 @@ namespace robot_qt_viewer
         result.previousDirty = m_context.projectSession().isDirty();
 
         simulation_project::AddRobotEntityCommand command;
-        command.displayName = pathStemUtf8(path);
+        const std::string sourceName = pathStemUtf8(path);
+        command.displayName = sourceName;
         command.sourceType = sourceType;
         command.sourcePath = m_context.projectSession().makePortableAssetPath(path);
+        std::vector<std::string> displayNames;
+        if(isSimscapeSourceType(sourceType)) {
+            std::vector<robot::RobotModel> models;
+            try {
+                models = IRobotLoader::get_robots(RobotType::SimscapeRobot, path.generic_u8string());
+            } catch(const std::exception& ex) {
+                result.message = QString("Import robot failed: %1").arg(QString::fromStdString(ex.what()));
+                return result;
+            }
+            if(models.empty()) {
+                result.message = QString("Import robot failed: no Simscape models loaded from %1")
+                    .arg(QString::fromStdWString(path.wstring()));
+                return result;
+            }
+            displayNames.reserve(models.size());
+            for(std::size_t index = 0; index < models.size(); ++index) {
+                displayNames.push_back(modelDisplayName(sourceName, models[index], index, models.size()));
+            }
+        } else {
+            displayNames.push_back(sourceName);
+        }
+
+        std::size_t importedCount = 0;
         simulation_project::ProjectSceneEntityCommandResult commandResult;
         const ProjectMutationResult mutationResult = m_context.documentController().mutateProject(
             QStringLiteral("importRobot"),
             ProjectDirtyPolicy::UserEdit,
             [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
                 simulation_project::ProjectSceneEntityCommands commands(service.document());
-                commandResult = commands.addRobot(command);
-                if(!commandResult.success) {
-                    error = commandResult.message;
-                    return false;
+                for(std::size_t index = 0; index < displayNames.size(); ++index) {
+                    command.displayName = displayNames[index];
+                    command.sourceModelIndex = static_cast<int>(index);
+                    simulation_project::ProjectSceneEntityCommandResult currentResult =
+                        commands.addRobot(command);
+                    if(!currentResult.success) {
+                        error = currentResult.message;
+                        return false;
+                    }
+                    if(index == 0) {
+                        commandResult = currentResult;
+                    }
+                    ++importedCount;
                 }
                 changed = true;
                 return true;
             });
         result.success = mutationResult.success;
-        result.message = mutationResult.success
-            ? QString::fromStdString(commandResult.message)
+        result.message = mutationResult.success && importedCount > 1
+            ? QString("Imported %1 robots from %2")
+                .arg(static_cast<qulonglong>(importedCount))
+                .arg(QString::fromStdString(command.sourcePath))
+            : mutationResult.success
+                ? QString::fromStdString(commandResult.message)
             : mutationResult.message;
         result.entityId = QString::fromStdString(commandResult.entityId);
         result.storedPath = QString::fromStdString(commandResult.storedPath);
@@ -202,8 +261,7 @@ namespace robot_qt_viewer
 
     SceneEntityImportResult SceneEntityWorkflowController::importSceneObjectFromPath(
         const std::filesystem::path& path,
-        const std::string& objectType,
-        double modelScale)
+        const std::string& objectType)
     {
         SceneEntityImportResult result;
         result.previousDocument = m_context.document();
@@ -224,14 +282,6 @@ namespace robot_qt_viewer
                     error = commandResult.message;
                     return false;
                 }
-                simulation_project::SceneObjectDesc* object =
-                    service.findSceneObject(commandResult.entityId);
-                if(object == nullptr) {
-                    error = "Imported scene object is unavailable.";
-                    return false;
-                }
-                object->visualScale = modelScale;
-                object->collisionScale = modelScale;
                 changed = true;
                 return true;
             });

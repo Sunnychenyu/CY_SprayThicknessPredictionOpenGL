@@ -22,6 +22,12 @@ class MotionControlWidget : public QWidget
     Q_OBJECT
 
 public:
+    struct RobotItem
+    {
+        QString id;
+        QString label;
+    };
+
     struct CollisionDetectorItem
     {
         QString id;
@@ -38,10 +44,13 @@ public:
 
     explicit MotionControlWidget(QWidget* parent = nullptr);
 
+    void setRobots(const QVector<RobotItem>& robots, const QString& preferredRobotId);
+    QString currentRobotId() const;
     void setRobotId(const QString& robotId);
     void setJoints(const QStringList& jointNames, const QStringList& jointTypes);
     void setJointDisplayValue(const QString& jointName, double displayValue, bool valueValid);
     void setMotionActionsEnabled(bool enabled);
+    void setAutoMotionControls(bool checked, double amplitude, double speed);
     void setAutoMotionChecked(bool checked);
     bool autoMotionChecked() const;
     double autoAmplitude() const;
@@ -59,6 +68,7 @@ public:
     CollisionResultsWidget* collisionResultsWidget() const;
 
 signals:
+    void robotSelectionChanged(const QString& robotId);
     void jointDisplayValueChanged(const QString& jointName, const QString& jointType, double displayValue);
     void autoMotionChanged();
     void applyInitialPoseRequested();
@@ -79,6 +89,8 @@ private:
         QWidget* rowWidget = nullptr;
         QSlider* slider = nullptr;
         QDoubleSpinBox* valueSpin = nullptr;
+        double sliderScale = 10.0;
+        bool rangeCalibrated = false;
     };
 
     void clearJointRows();
@@ -86,6 +98,7 @@ private:
     void applyRowDisplayValue(int rowIndex, double displayValue);
     bool isRevoluteJoint(const QString& jointType) const;
 
+    QComboBox* m_robotCombo = nullptr;
     QLabel* m_jointRobotLabel = nullptr;
     QScrollArea* m_jointScrollArea = nullptr;
     QWidget* m_jointRowsWidget = nullptr;

@@ -25,7 +25,6 @@ namespace
         text.insert("menu.theme", "Theme");
         text.insert("menu.language", "Language");
         text.insert("menu.cameraViews", "Camera Views");
-        text.insert("menu.projectionMode", "Projection Mode");
         text.insert("theme.Modern", "Modern");
         text.insert("theme.Dark", "Dark");
         text.insert("theme.Light", "Light");
@@ -50,10 +49,13 @@ namespace
         text.insert("action.exportCollisionUrdf", "Export Robot URDF With Collision");
         text.insert("action.importRobot", "Import Robot");
         text.insert("action.importObject", "Import Object");
+        text.insert("action.importPointCloud", "Import Point Cloud");
         text.insert("action.deleteSelectedItem", "Delete Selected Item");
         text.insert("action.saveImage", "Save Image");
         text.insert("action.resetCamera", "Reset Camera");
         text.insert("action.viewOrientation", "View Orientation");
+        text.insert("action.enterViewportFullscreen", "Enter Full Screen (F11)");
+        text.insert("action.exitViewportFullscreen", "Exit Full Screen (F11)");
         text.insert("action.mountEdit", "Mount Edit");
         text.insert("action.addLinkMount", "Add Link Mount");
         text.insert("action.collisionEdit", "Collision Edit");
@@ -74,8 +76,6 @@ namespace
         text.insert("action.cameraView.bottom", "Bottom");
         text.insert("action.cameraView.showOverlay", "Show View Orientation");
         text.insert("action.cameraView.hideOverlay", "Hide View Orientation");
-        text.insert("action.projectionMode.perspective", "Perspective");
-        text.insert("action.projectionMode.orthographic", "Orthographic");
         text.insert("action.collisionGeometry", "Collision Geometry");
         text.insert("action.collisionQueries", "Collision Detection");
         text.insert("action.robotRunDetails", "Robot Run Details");
@@ -93,7 +93,6 @@ namespace
         text.insert("menu.theme", zh(L"\u4e3b\u9898"));
         text.insert("menu.language", zh(L"\u8bed\u8a00"));
         text.insert("menu.cameraViews", zh(L"\u76f8\u673a\u89c6\u89d2"));
-        text.insert("menu.projectionMode", zh(L"\u6295\u5f71\u65b9\u5f0f"));
         text.insert("theme.Modern", zh(L"\u73b0\u4ee3"));
         text.insert("theme.Dark", zh(L"\u6df1\u8272"));
         text.insert("theme.Light", zh(L"\u6d45\u8272"));
@@ -118,10 +117,13 @@ namespace
         text.insert("action.exportCollisionUrdf", zh(L"\u5bfc\u51fa\u5e26\u78b0\u649e\u7684\u673a\u5668\u4eba URDF"));
         text.insert("action.importRobot", zh(L"\u5bfc\u5165\u673a\u5668\u4eba"));
         text.insert("action.importObject", zh(L"\u5bfc\u5165\u5bf9\u8c61"));
+        text.insert("action.importPointCloud", zh(L"\u5bfc\u5165\u70b9\u4e91"));
         text.insert("action.deleteSelectedItem", zh(L"\u5220\u9664\u9009\u4e2d\u9879"));
         text.insert("action.saveImage", zh(L"\u4fdd\u5b58\u56fe\u50cf"));
         text.insert("action.resetCamera", zh(L"\u91cd\u7f6e\u76f8\u673a"));
         text.insert("action.viewOrientation", zh(L"\u89c6\u89d2\u65b9\u5411"));
+        text.insert("action.enterViewportFullscreen", zh(L"\u8fdb\u5165\u5168\u5c4f (F11)"));
+        text.insert("action.exitViewportFullscreen", zh(L"\u9000\u51fa\u5168\u5c4f (F11)"));
         text.insert("action.mountEdit", zh(L"Mount \u7f16\u8f91"));
         text.insert("action.addLinkMount", zh(L"\u6dfb\u52a0 Link Mount"));
         text.insert("action.collisionEdit", zh(L"\u78b0\u649e\u7f16\u8f91"));
@@ -142,8 +144,6 @@ namespace
         text.insert("action.cameraView.bottom", zh(L"\u4e0b\u89c6"));
         text.insert("action.cameraView.showOverlay", zh(L"\u663e\u793a\u89c6\u89d2\u63a7\u4ef6"));
         text.insert("action.cameraView.hideOverlay", zh(L"\u9690\u85cf\u89c6\u89d2\u63a7\u4ef6"));
-        text.insert("action.projectionMode.perspective", zh(L"\u900f\u89c6\u6295\u5f71"));
-        text.insert("action.projectionMode.orthographic", zh(L"\u5e73\u884c\u6295\u5f71"));
         text.insert("action.collisionGeometry", zh(L"\u78b0\u649e\u51e0\u4f55"));
         text.insert("action.collisionQueries", zh(L"\u78b0\u649e\u68c0\u6d4b"));
         text.insert("action.robotRunDetails", zh(L"\u673a\u5668\u4eba\u8fd0\u884c\u8be6\u60c5"));

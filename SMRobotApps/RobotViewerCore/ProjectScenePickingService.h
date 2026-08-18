@@ -6,7 +6,6 @@
 
 #include <string>
 #include <vector>
-#include <cstdint>
 
 enum class ProjectScenePickTargetKind
 {
@@ -38,8 +37,6 @@ struct ProjectScenePickCandidate
     bool hasAabb = false;
     Eigen::Vector3d aabbMin = Eigen::Vector3d::Zero();
     Eigen::Vector3d aabbMax = Eigen::Vector3d::Zero();
-    bool hasPreciseHit = false;
-    double preciseRayDistance = 0.0;
 };
 
 struct ProjectScenePickResult
@@ -55,21 +52,6 @@ struct ProjectScenePickResult
     bool valid() const
     {
         return kind != ProjectScenePickTargetKind::None;
-    }
-};
-
-struct ProjectSceneTrianglePickResult
-{
-    std::string sceneObjectId;
-    std::uint32_t triangleIndex = 0;
-    Eigen::Vector3d hitPosition = Eigen::Vector3d::Zero();
-    Eigen::Vector3d nearestVertexPosition = Eigen::Vector3d::Zero();
-    Eigen::Vector3d normal = Eigen::Vector3d::UnitZ();
-    double rayDistance = 0.0;
-
-    bool valid() const
-    {
-        return !sceneObjectId.empty();
     }
 };
 

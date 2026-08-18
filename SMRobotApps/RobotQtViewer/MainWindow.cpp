@@ -5,9 +5,6 @@
 #include "CollisionRuntimeResultsWidget.h"
 #include "CoatingAnalysisModuleController.h"
 #include "CoatingAnalysisPanel.h"
-#include "CoatingAnalysisInfoPanel.h"
-#include "CoatingAnalysisTreePanel.h"
-#include "CoatingAnalysisVisibilityBar.h"
 #include "MotionControlModuleController.h"
 #include "MotionControlWidget.h"
 #include "MotionPlanningEditorWidget.h"
@@ -19,7 +16,9 @@
 #include "RobotQtViewerCollisionWorkbenchServicesAdapter.h"
 #include "RobotQtViewerToolSetupAppServicesAdapter.h"
 #include "RobotQtViewerViewportEventController.h"
+#include "RobotQtViewerViewportPresentationController.h"
 #include "RobotQtViewerViewportServicesAdapter.h"
+#include <RobotQtViewerFileDialog.h>
 #include "ProjectAssemblyDialogService.h"
 #include "CollisionConfigDialogService.h"
 #include "RobotQtWidgetUtils.h"
@@ -51,15 +50,17 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QByteArray>
+#include <QColor>
 #include <QCursor>
 #include <QDockWidget>
 #include <QEvent>
-#include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QIcon>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLayout>
 #include <QList>
@@ -67,10 +68,12 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPoint>
+#include <QPainter>
+#include <QPen>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
-#include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QStringList>
@@ -446,6 +449,38 @@ namespace
         return button;
     }
 
+    QIcon viewportPresentationIcon(bool leavePresentationMode)
+    {
+        QPixmap pixmap(64, 64);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(48, 63, 74), 5.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+
+        if(!leavePresentationMode) {
+            painter.drawLine(10, 25, 10, 10);
+            painter.drawLine(10, 10, 25, 10);
+            painter.drawLine(39, 10, 54, 10);
+            painter.drawLine(54, 10, 54, 25);
+            painter.drawLine(10, 39, 10, 54);
+            painter.drawLine(10, 54, 25, 54);
+            painter.drawLine(39, 54, 54, 54);
+            painter.drawLine(54, 39, 54, 54);
+        } else {
+            painter.drawLine(9, 24, 24, 24);
+            painter.drawLine(24, 9, 24, 24);
+            painter.drawLine(40, 9, 40, 24);
+            painter.drawLine(40, 24, 55, 24);
+            painter.drawLine(9, 40, 24, 40);
+            painter.drawLine(24, 40, 24, 55);
+            painter.drawLine(40, 40, 55, 40);
+            painter.drawLine(40, 40, 40, 55);
+        }
+
+        return QIcon(pixmap);
+    }
+
 }
 
 MainWindow::MainWindow(QWidget* parent)
@@ -521,6 +556,15 @@ MainWindow::MainWindow(QWidget* parent)
         });
     m_documentContext.setViewportServices(m_viewportServices.get());
     setCentralWidget(m_viewport);
+    m_viewportPresentationController =
+        std::make_unique<robot_qt_viewer::RobotQtViewerViewportPresentationController>(
+            *this,
+            *m_viewport);
+    connect(m_viewport, &RobotViewport::backgroundDoubleClicked, this, [this]() {
+        const bool active = m_viewportPresentationController != nullptr &&
+            m_viewportPresentationController->isActive();
+        setViewportPresentationMode(!active);
+    });
     connect(m_viewport, &RobotViewport::robotLinksAvailable, this, &MainWindow::addRobotLinksToTree);
     connect(m_viewport, &RobotViewport::sceneObjectAvailable, this, &MainWindow::addSceneObjectToTree);
     connect(m_viewport, &RobotViewport::scenePicked, this,
@@ -543,9 +587,6 @@ MainWindow::MainWindow(QWidget* parent)
                 handleSceneExplorerNodeActivated(node, 0);
             }
         });
-    connect(m_viewport, &RobotViewport::sceneSelectionCleared, this, [this]() {
-        m_selectionModel.clear(QStringLiteral("viewportBlankClick"));
-    });
     connect(m_viewport, &RobotViewport::robotStateUpdated, this, [this]() {
         if(m_motionControlController != nullptr) {
             m_motionControlController->handleRobotStateUpdated();
@@ -586,7 +627,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
         updateCameraViewOverlayGeometry();
         updateThicknessLegendOverlayGeometry();
-        updateCoatingVisibilityOverlayGeometry();
     }
     return QMainWindow::eventFilter(watched, event);
 }
@@ -668,9 +708,6 @@ void MainWindow::retranslateUi()
     if(m_cameraViewMenu != nullptr) {
         m_cameraViewMenu->setTitle(uiText("menu.cameraViews"));
     }
-    if(m_projectionModeMenu != nullptr) {
-        m_projectionModeMenu->setTitle(uiText("menu.projectionMode"));
-    }
     if(m_bottomPanelDock != nullptr) {
         m_bottomPanelDock->setWindowTitle(uiText("action.robotRunDetails"));
     }
@@ -746,9 +783,7 @@ void MainWindow::retranslateUi()
         setAction(m_importObjectAction, uiText("action.importObject"));
     }
     if(m_importPointCloudAction != nullptr) {
-        setAction(m_importPointCloudAction, m_language == robot_qt_viewer::LanguageKind::Chinese
-            ? QString::fromWCharArray(L"\u5bfc\u5165\u70b9\u4e91")
-            : QStringLiteral("Import Point Cloud"));
+        setAction(m_importPointCloudAction, uiText("action.importPointCloud"));
     }
     if(m_deleteRobotAction != nullptr) {
         setAction(m_deleteRobotAction, uiText("action.deleteSelectedItem"));
@@ -759,14 +794,9 @@ void MainWindow::retranslateUi()
     if(m_resetCameraAction != nullptr) {
         setAction(m_resetCameraAction, uiText("action.viewOrientation"));
     }
+    updateViewportPresentationAction();
     for(auto it = m_cameraViewActions.begin(); it != m_cameraViewActions.end(); ++it) {
         setAction(it.value(), uiText(QString("action.cameraView.%1").arg(it.key())));
-    }
-    if(m_perspectiveProjectionAction != nullptr) {
-        setAction(m_perspectiveProjectionAction, uiText("action.projectionMode.perspective"));
-    }
-    if(m_orthographicProjectionAction != nullptr) {
-        setAction(m_orthographicProjectionAction, uiText("action.projectionMode.orthographic"));
     }
     if(m_collisionGeometryAction != nullptr) {
         setAction(m_collisionGeometryAction, uiText("action.collisionGeometry"));
@@ -893,6 +923,14 @@ void MainWindow::createActions()
     m_resetCameraAction = new QAction(this);
     connect(m_resetCameraAction, &QAction::triggered, this, &MainWindow::showCameraViewPalette);
 
+    m_viewportPresentationAction = new QAction(this);
+    m_viewportPresentationAction->setCheckable(true);
+    m_viewportPresentationAction->setShortcut(QKeySequence(Qt::Key_F11));
+    m_viewportPresentationAction->setShortcutContext(Qt::ApplicationShortcut);
+    connect(m_viewportPresentationAction, &QAction::triggered, this, [this](bool checked) {
+        setViewportPresentationMode(checked);
+    });
+
     m_cameraViewMenu = new QMenu(this);
     auto addCameraViewAction = [this](const QString& id, ProjectSceneCameraView view) {
         QAction* action = m_cameraViewMenu->addAction(QString());
@@ -911,30 +949,6 @@ void MainWindow::createActions()
     addCameraViewAction(QStringLiteral("right"), ProjectSceneCameraView::Right);
     addCameraViewAction(QStringLiteral("top"), ProjectSceneCameraView::Top);
     addCameraViewAction(QStringLiteral("bottom"), ProjectSceneCameraView::Bottom);
-
-    m_projectionModeMenu = new QMenu(this);
-    auto* projectionGroup = new QActionGroup(this);
-    projectionGroup->setExclusive(true);
-    m_perspectiveProjectionAction = new QAction(this);
-    m_perspectiveProjectionAction->setCheckable(true);
-    m_perspectiveProjectionAction->setActionGroup(projectionGroup);
-    m_perspectiveProjectionAction->setChecked(true);
-    connect(m_perspectiveProjectionAction, &QAction::triggered, this, [this]() {
-        if(m_viewport != nullptr) {
-            m_viewport->setProjectionMode(ProjectSceneProjectionMode::Perspective);
-        }
-    });
-
-    m_orthographicProjectionAction = new QAction(this);
-    m_orthographicProjectionAction->setCheckable(true);
-    m_orthographicProjectionAction->setActionGroup(projectionGroup);
-    connect(m_orthographicProjectionAction, &QAction::triggered, this, [this]() {
-        if(m_viewport != nullptr) {
-            m_viewport->setProjectionMode(ProjectSceneProjectionMode::Orthographic);
-        }
-    });
-    m_projectionModeMenu->addAction(m_perspectiveProjectionAction);
-    m_projectionModeMenu->addAction(m_orthographicProjectionAction);
 
     m_collisionGeometryAction = new QAction(this);
     m_collisionGeometryAction->setCheckable(true);
@@ -1061,9 +1075,10 @@ void MainWindow::createActions()
     m_fileMenu->addSeparator();
     m_fileMenu->addAction(m_loadRobotAction);
     m_fileMenu->addAction(m_saveImageAction);
+    m_viewMenu->addAction(m_viewportPresentationAction);
+    m_viewMenu->addSeparator();
     m_viewMenu->addAction(m_resetCameraAction);
     m_viewMenu->addMenu(m_cameraViewMenu);
-    m_viewMenu->addMenu(m_projectionModeMenu);
     m_viewMenu->addAction(m_collisionGeometryAction);
     m_viewMenu->addAction(m_collisionQueriesAction);
 
@@ -1076,6 +1091,7 @@ void MainWindow::createActions()
     toolbarActions.saveCollisionOverrides = m_saveCollisionOverridesAction;
     toolbarActions.importRobot = m_importRobotAction;
     toolbarActions.importObject = m_importObjectAction;
+    toolbarActions.importPointCloud = m_importPointCloudAction;
     toolbarActions.deleteSelectedItem = m_deleteRobotAction;
     toolbarActions.saveImage = m_saveImageAction;
     toolbarActions.resetCamera = m_resetCameraAction;
@@ -1162,6 +1178,7 @@ void MainWindow::createCameraViewOverlay()
     auto* overlayLayout = new QHBoxLayout(overlay);
     overlayLayout->setContentsMargins(4, 4, 4, 4);
     overlayLayout->setSpacing(0);
+    overlayLayout->addWidget(makeCameraViewButton(m_viewportPresentationAction, overlay));
     overlayLayout->addWidget(makeCameraViewButton(m_resetCameraAction, overlay));
 
     m_cameraViewOverlay = overlay;
@@ -1182,6 +1199,39 @@ void MainWindow::updateCameraViewOverlayGeometry()
     const int x = std::max(margin, m_viewport->width() - size.width() - margin);
     m_cameraViewOverlay->move(x, margin);
     m_cameraViewOverlay->raise();
+}
+
+void MainWindow::setViewportPresentationMode(bool active)
+{
+    if(m_viewportPresentationController == nullptr) {
+        return;
+    }
+
+    m_viewportPresentationController->setActive(active);
+    updateViewportPresentationAction();
+    updateCameraViewOverlayGeometry();
+    updateThicknessLegendOverlayGeometry();
+}
+
+void MainWindow::updateViewportPresentationAction()
+{
+    if(m_viewportPresentationAction == nullptr) {
+        return;
+    }
+
+    const bool active = m_viewportPresentationController != nullptr &&
+        m_viewportPresentationController->isActive();
+    const QSignalBlocker blocker(m_viewportPresentationAction);
+    m_viewportPresentationAction->setChecked(active);
+    m_viewportPresentationAction->setIcon(viewportPresentationIcon(active));
+
+    const QString text = uiText(active
+        ? QStringLiteral("action.exitViewportFullscreen")
+        : QStringLiteral("action.enterViewportFullscreen"));
+    m_viewportPresentationAction->setText(text);
+    m_viewportPresentationAction->setIconText(text);
+    m_viewportPresentationAction->setToolTip(text);
+    m_viewportPresentationAction->setStatusTip(text);
 }
 
 void MainWindow::updateThicknessLegendOverlayGeometry()
@@ -1232,6 +1282,12 @@ void MainWindow::enterWorkbench(
         return;
     }
 
+    if(previousKind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion &&
+        kind != robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion &&
+        m_motionControlController != nullptr) {
+        m_motionControlController->stopAllAutoMotion();
+    }
+
     if(m_coatingAnalysisController != nullptr && previousKind != kind) {
         if(previousKind == robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis) {
             m_coatingAnalysisController->deactivate();
@@ -1259,14 +1315,9 @@ void MainWindow::enterWorkbench(
     }
     if(m_viewport != nullptr) {
         m_viewport->setInteractionMode(toProjectSceneInteractionMode(m_workbenchManager.viewportMode()));
-        if(previousKind != kind &&
-            kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse) {
-            m_viewport->focusFullScene(0.3);
-        }
     }
     updateTaskPanel();
     updateRobotRunDetailsDockVisibility();
-    updateCoatingAnalysisVisibility();
     robot_qt_viewer::RobotQtViewerEvent event;
     event.kind = robot_qt_viewer::RobotQtViewerEventKind::StatusMessageRequested;
     event.sourceId = sourceId;
@@ -1347,40 +1398,6 @@ void MainWindow::updateRobotRunDetailsDockVisibility()
         m_robotRunDetailsAction->setEnabled(inRobotRunMode);
         m_robotRunDetailsAction->setChecked(visible);
     }
-}
-
-void MainWindow::updateCoatingAnalysisVisibility()
-{
-    const bool coatingActive =
-        m_workbenchManager.activeWorkbench()
-        == robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis;
-    if(m_sceneExplorerDock != nullptr) {
-        m_sceneExplorerDock->setVisible(!coatingActive);
-    }
-    if(m_coatingAnalysisTreeDock != nullptr) {
-        m_coatingAnalysisTreeDock->setVisible(coatingActive);
-    }
-    if(m_coatingAnalysisVisibilityBar != nullptr) {
-        m_coatingAnalysisVisibilityBar->setVisible(coatingActive);
-        if(coatingActive) {
-            updateCoatingVisibilityOverlayGeometry();
-        }
-    }
-}
-
-void MainWindow::updateCoatingVisibilityOverlayGeometry()
-{
-    if(m_viewport == nullptr || m_coatingAnalysisVisibilityBar == nullptr) {
-        return;
-    }
-
-    m_coatingAnalysisVisibilityBar->adjustSize();
-    const int margin = 10;
-    const QSize size = m_coatingAnalysisVisibilityBar->sizeHint();
-    const int x = std::max(margin, (m_viewport->width() - size.width()) / 2);
-    const int y = std::max(margin, m_viewport->height() - size.height() - margin);
-    m_coatingAnalysisVisibilityBar->move(x, y);
-    m_coatingAnalysisVisibilityBar->raise();
 }
 
 void MainWindow::updateTaskPanel()
@@ -1473,7 +1490,7 @@ void MainWindow::newProject()
 
 void MainWindow::openProject()
 {
-    const QString fileName = QFileDialog::getOpenFileName(
+    const QString fileName = robot_qt_viewer::getOpenFileName(
         this,
         "Open project",
         defaultProjectDialogPath(m_projectPath),
@@ -1651,7 +1668,7 @@ void MainWindow::saveProject()
 
 void MainWindow::saveProjectAs()
 {
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = robot_qt_viewer::getSaveFileName(
         this,
         "Save project",
         m_projectPath.empty() ? defaultProjectDialogPath(m_projectPath) : QString::fromStdWString(m_projectPath.wstring()),
@@ -1666,7 +1683,7 @@ void MainWindow::saveProjectAs()
 
 void MainWindow::saveProjectAsV3()
 {
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = robot_qt_viewer::getSaveFileName(
         this,
         "Save project as system",
         m_projectPath.empty() ? defaultProjectDialogPath(m_projectPath) : QString::fromStdWString(m_projectPath.wstring()),
@@ -2459,40 +2476,8 @@ void MainWindow::createPanels()
     coatingAnalysisScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     coatingAnalysisScrollArea->setFrameShape(QFrame::NoFrame);
     m_coatingAnalysisPanel = new robot_qt_viewer::CoatingAnalysisPanel(coatingAnalysisScrollArea);
-
-    QDockWidget* coatingTreeDock = new QDockWidget(QStringLiteral("Coating Analysis"), this);
-    m_coatingAnalysisTreeDock = coatingTreeDock;
-    auto* coatingSplitter = new QSplitter(Qt::Vertical, coatingTreeDock);
-    m_coatingAnalysisTreePanel = new robot_qt_viewer::CoatingAnalysisTreePanel(coatingSplitter);
-    m_coatingAnalysisInfoPanel = new robot_qt_viewer::CoatingAnalysisInfoPanel(coatingSplitter);
-    coatingSplitter->addWidget(m_coatingAnalysisTreePanel);
-    coatingSplitter->addWidget(m_coatingAnalysisInfoPanel);
-    coatingSplitter->setStretchFactor(0, 3);
-    coatingSplitter->setStretchFactor(1, 2);
-    coatingTreeDock->setWidget(coatingSplitter);
-    coatingTreeDock->setMinimumWidth(300);
-    addDockWidget(Qt::LeftDockWidgetArea, coatingTreeDock);
-    coatingTreeDock->hide();
-
-    m_coatingAnalysisVisibilityBar =
-        new robot_qt_viewer::CoatingAnalysisVisibilityBar(m_viewport);
-    m_coatingAnalysisVisibilityBar->setObjectName(
-        QStringLiteral("RobotQtViewerCoatingVisibilityOverlay"));
-    m_coatingAnalysisVisibilityBar->setAttribute(Qt::WA_StyledBackground, true);
-    m_coatingAnalysisVisibilityBar->setStyleSheet(QStringLiteral(
-        "QWidget#RobotQtViewerCoatingVisibilityOverlay {"
-        "background: rgba(248, 250, 252, 232);"
-        "border: 1px solid rgba(110, 122, 132, 160);"
-        "border-radius: 6px;"
-        "}"));
-    updateCoatingVisibilityOverlayGeometry();
-    m_coatingAnalysisVisibilityBar->hide();
-
     m_coatingAnalysisController = new robot_qt_viewer::CoatingAnalysisModuleController(
         *m_coatingAnalysisPanel,
-        *m_coatingAnalysisTreePanel,
-        *m_coatingAnalysisInfoPanel,
-        *m_coatingAnalysisVisibilityBar,
         m_documentContext,
         this);
     m_thicknessLegendOverlay = new robot_qt_viewer::ThicknessLegendWidget(this);
@@ -2530,9 +2515,6 @@ void MainWindow::createPanels()
     connect(m_viewport, &RobotViewport::surfaceScalarHovered,
         m_coatingAnalysisController,
         &robot_qt_viewer::CoatingAnalysisModuleController::handleSurfaceScalarHover);
-    connect(m_viewport, &RobotViewport::rotationSurfacePicked,
-        m_coatingAnalysisController,
-        &robot_qt_viewer::CoatingAnalysisModuleController::handleRotationSurfacePicked);
     m_documentViewRegistry.registerModule(
         QStringLiteral("coatingAnalysis"),
         m_coatingAnalysisController,
@@ -2572,9 +2554,6 @@ void MainWindow::createPanels()
     addDockWidget(Qt::RightDockWidgetArea, resultDock);
     m_windowMenu->addAction(m_sceneExplorerDock->toggleViewAction());
     m_windowMenu->addAction(m_taskPanelDock->toggleViewAction());
-    if(m_coatingAnalysisTreeDock != nullptr) {
-        m_windowMenu->addAction(m_coatingAnalysisTreeDock->toggleViewAction());
-    }
     m_windowMenu->addAction(m_robotRunDetailsAction);
     applyInitialPanelLayout();
     QTimer::singleShot(0, this, [this]() {
@@ -2584,7 +2563,6 @@ void MainWindow::createPanels()
     updateWorkbenchActions();
     updateTaskPanel();
     updateRobotRunDetailsDockVisibility();
-    updateCoatingAnalysisVisibility();
 }
 
 void MainWindow::applyInitialPanelLayout()
@@ -3298,7 +3276,7 @@ void MainWindow::updateRobotPanel(const smrobotgen2::sdk::IRobotModel& model)
 void MainWindow::saveViewportImage()
 {
     QString selectedFilter;
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = robot_qt_viewer::getSaveFileName(
         this,
         "Save viewport image",
         QString(),

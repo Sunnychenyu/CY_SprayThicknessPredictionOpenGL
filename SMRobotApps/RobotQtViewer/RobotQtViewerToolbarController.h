@@ -24,6 +24,7 @@ namespace robot_qt_viewer
         QAction* saveCollisionOverrides = nullptr;
         QAction* importRobot = nullptr;
         QAction* importObject = nullptr;
+        QAction* importPointCloud = nullptr;
         QAction* deleteSelectedItem = nullptr;
         QAction* saveImage = nullptr;
         QAction* resetCamera = nullptr;

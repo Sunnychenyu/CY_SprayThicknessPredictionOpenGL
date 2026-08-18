@@ -1,10 +1,8 @@
 #pragma once
 
 #include <filesystem>
-#include <cstdint>
 #include <vector>
 
-#include <QHash>
 #include <QString>
 #include <QStringList>
 
@@ -16,70 +14,6 @@
 
 namespace robot_qt_viewer
 {
-    struct CoatingTrajectoryPreviewPoint
-    {
-        double positionX = 0.0;
-        double positionY = 0.0;
-        double positionZ = 0.0;
-        double directionX = 1.0;
-        double directionY = 0.0;
-        double directionZ = 0.0;
-        bool sprayEnabled = false;
-        bool startsNewSegment = false;
-    };
-
-    struct CoatingPredictionDebugTriangle
-    {
-        double ax = 0.0;
-        double ay = 0.0;
-        double az = 0.0;
-        double bx = 0.0;
-        double by = 0.0;
-        double bz = 0.0;
-        double cx = 0.0;
-        double cy = 0.0;
-        double cz = 0.0;
-    };
-
-    struct CoatingPredictionDebugPoint
-    {
-        double positionX = 0.0;
-        double positionY = 0.0;
-        double positionZ = 0.0;
-        double directionX = 1.0;
-        double directionY = 0.0;
-        double directionZ = 0.0;
-    };
-
-    struct CoatingPredictionDebugState
-    {
-        bool visible = false;
-        QString objectId;
-        std::vector<CoatingPredictionDebugTriangle> seedTriangles;
-        std::vector<CoatingPredictionDebugTriangle> cylindricalTriangles;
-        std::vector<CoatingPredictionDebugTriangle> localSectorTriangles;
-        std::vector<std::uint32_t> localSectorVertexIndices;
-        std::vector<CoatingPredictionDebugPoint> profileLinePoints;
-        std::vector<CoatingPredictionDebugPoint> selectedProfileLinePoints;
-        std::vector<CoatingPredictionDebugPoint> sprayPoints;
-        double axisOriginX = 0.0;
-        double axisOriginY = 0.0;
-        double axisOriginZ = 0.0;
-        double axisDirectionX = 0.0;
-        double axisDirectionY = 0.0;
-        double axisDirectionZ = 1.0;
-        double axisLength = 1.0;
-        double markerRadius = 0.002;
-    };
-
-    struct CoatingPredictionDebugVisibility
-    {
-        bool cylindricalSurface = true;
-        bool rotationAxis = true;
-        bool localSector = true;
-        bool sprayPoints = true;
-    };
-
     struct RobotQtViewerViewportLoadResult
     {
         bool success = false;
@@ -141,11 +75,6 @@ namespace robot_qt_viewer
         virtual void clearMountFrameLinkFocus() = 0;
         virtual void focusObjectFrameObject(const QString& objectId) = 0;
         virtual void clearObjectFrameObjectFocus() = 0;
-        virtual void focusCoatingObject(const QString& objectId, double duration = 0.3)
-        {
-            (void)objectId;
-            (void)duration;
-        }
         virtual void focusMountedAttachment(const QString& attachmentId) = 0;
         virtual void clearMountedAttachmentFocus() = 0;
         virtual void previewObjectCollisionModelVariant(
@@ -264,56 +193,6 @@ namespace robot_qt_viewer
         {
             (void)enabled;
             (void)objectId;
-        }
-        virtual void beginRotationSurfacePick()
-        {
-        }
-        virtual void setCoatingTrajectoryPreview(
-            const std::vector<CoatingTrajectoryPreviewPoint>& points,
-            bool visible)
-        {
-            (void)points;
-            (void)visible;
-        }
-        virtual bool setCoatingTrajectoryPreviewVisible(bool visible)
-        {
-            (void)visible;
-            return false;
-        }
-        virtual void setCoatingPredictionDebugState(
-            const CoatingPredictionDebugState& state)
-        {
-            (void)state;
-        }
-        virtual void setCoatingPredictionDebugVisibility(
-            const CoatingPredictionDebugVisibility& visibility)
-        {
-            (void)visibility;
-        }
-        virtual void clearCoatingPredictionDebugState()
-        {
-        }
-        virtual bool setCoatingModelVisible(const QString& objectId, bool visible)
-        {
-            (void)objectId;
-            (void)visible;
-            return false;
-        }
-        virtual void setCoatingModelVisibilities(const QHash<QString, bool>& visibility)
-        {
-            (void)visibility;
-        }
-        virtual void clearCoatingModelVisibility(const QString& objectId)
-        {
-            (void)objectId;
-        }
-        virtual void setCoatingAnalysisView(bool active)
-        {
-            (void)active;
-        }
-        virtual void setGpuPredictionBusy(bool busy)
-        {
-            (void)busy;
         }
     };
 }

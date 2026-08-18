@@ -14,12 +14,59 @@ if ( CMAKE_SYSTEM_NAME MATCHES "Linux" )
     set( CMAKE_CXX_COMPILER "/usr/bin/g++" )
     set( CMAKE_CXX_STANDARD 17 )
 
-    # Set the RPATH for runtime to prioritize system libraries
-    set(CMAKE_BUILD_RPATH "/usr/lib/x86_64-linux-gnu")
-    set(CMAKE_INSTALL_RPATH "/usr/lib/x86_64-linux-gnu")
+    # Keep Linux runtime resolution tied to the build/package tree instead of
+    # accidentally preferring another Qt installation from /usr or conda.
+    set(CMAKE_SKIP_RPATH FALSE)
+    set(CMAKE_BUILD_RPATH "$ORIGIN/../lib;$ORIGIN")
+    set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN")
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 
-    # Make sure CMake does not add other paths automatically
-    set(CMAKE_SKIP_RPATH TRUE)
+    include(ProcessorCount)
+    ProcessorCount(RS2026_DETECTED_PROCESSOR_COUNT)
+    if(RS2026_DETECTED_PROCESSOR_COUNT EQUAL 0)
+        set(RS2026_DETECTED_PROCESSOR_COUNT 1)
+    endif()
+
+    set(RS2026_BUILD_PARALLEL_LEVEL "AUTO"
+        CACHE STRING "Parallel job count used by RS2026 build helpers. Use AUTO or a positive integer."
+    )
+    if(RS2026_BUILD_PARALLEL_LEVEL STREQUAL "AUTO")
+        set(RS2026_EFFECTIVE_BUILD_PARALLEL_LEVEL "${RS2026_DETECTED_PROCESSOR_COUNT}")
+    elseif(RS2026_BUILD_PARALLEL_LEVEL MATCHES "^[1-9][0-9]*$")
+        set(RS2026_EFFECTIVE_BUILD_PARALLEL_LEVEL "${RS2026_BUILD_PARALLEL_LEVEL}")
+    else()
+        message(FATAL_ERROR "RS2026_BUILD_PARALLEL_LEVEL must be AUTO or a positive integer.")
+    endif()
+
+    set(ENV{CMAKE_BUILD_PARALLEL_LEVEL} "${RS2026_EFFECTIVE_BUILD_PARALLEL_LEVEL}")
+    message(STATUS "Building with ${RS2026_EFFECTIVE_BUILD_PARALLEL_LEVEL} parallel jobs")
+
+    if(CMAKE_GENERATOR STREQUAL "Unix Makefiles")
+        set(RS2026_MAKE_PARALLEL_WRAPPER "${CMAKE_BINARY_DIR}/rs2026_make_parallel.sh")
+
+        if(NOT DEFINED RS2026_REAL_MAKE_PROGRAM)
+            set(RS2026_REAL_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}"
+                CACHE FILEPATH "Original make program used by RS2026 parallel wrapper."
+            )
+        endif()
+
+        file(WRITE "${RS2026_MAKE_PARALLEL_WRAPPER}"
+            "#!/usr/bin/env sh\n"
+            "exec \"${RS2026_REAL_MAKE_PROGRAM}\" -j${RS2026_EFFECTIVE_BUILD_PARALLEL_LEVEL} \"$@\"\n"
+        )
+        file(CHMOD "${RS2026_MAKE_PARALLEL_WRAPPER}"
+            PERMISSIONS
+                OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                GROUP_READ GROUP_EXECUTE
+                WORLD_READ WORLD_EXECUTE
+        )
+
+        set(CMAKE_MAKE_PROGRAM "${RS2026_MAKE_PARALLEL_WRAPPER}"
+            CACHE FILEPATH "Make program wrapped with RS2026 automatic parallel jobs." FORCE
+        )
+        message(STATUS "Unix Makefiles use ${RS2026_MAKE_PARALLEL_WRAPPER} for parallel builds")
+    endif()
 
 
 elseif( CMAKE_SYSTEM_NAME MATCHES "Windows" )

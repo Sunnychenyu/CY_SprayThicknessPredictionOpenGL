@@ -58,8 +58,6 @@ add_library(${TARGET_NAME} STATIC
     RobotCollisionModelInspector.h
     RobotCollisionProxyGenerator.cpp
     RobotCollisionProxyGenerator.h
-    SceneObjectHoverPass.cpp
-    SceneObjectHoverPass.h
     RobotViewport.cpp
     RobotViewport.h
 )

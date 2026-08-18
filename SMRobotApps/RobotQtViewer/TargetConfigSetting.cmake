@@ -14,7 +14,6 @@ set(${TARGET_NAME}_RequiredLibsPublic
     SMRobotCore::Collision
     SMRobotCore::Kinematics
     SMRobotPlatform::RenderCore
-    SMRobotPlatform::RenderCoreShaderResources
     SMRobotCore::RobotCore
     SMRobotCore::RobotIO
     SMRobotCore::RobotInstance

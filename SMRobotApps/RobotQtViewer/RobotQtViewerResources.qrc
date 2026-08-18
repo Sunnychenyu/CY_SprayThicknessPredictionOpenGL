@@ -8,6 +8,7 @@
         <file alias="icons/ribbon/save_collision_overrides.png">resources/icons/ribbon/save_collision_overrides.png</file>
         <file alias="icons/ribbon/import_robot.png">resources/icons/ribbon/import_robot.png</file>
         <file alias="icons/ribbon/import_object.png">resources/icons/ribbon/import_object.png</file>
+        <file alias="icons/ribbon/import_point_cloud.png">resources/icons/ribbon/import_point_cloud.png</file>
         <file alias="icons/ribbon/delete_selected.png">resources/icons/ribbon/delete_selected.png</file>
         <file alias="icons/ribbon/save_image.png">resources/icons/ribbon/save_image.png</file>
         <file alias="icons/ribbon/reset_camera.png">resources/icons/ribbon/reset_camera.png</file>

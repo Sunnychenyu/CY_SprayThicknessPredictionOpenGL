@@ -40,6 +40,7 @@ namespace robot_qt_viewer
             const QStringList& movableJointTypes);
         void setCollisionDetailsWidget(CollisionResultsWidget* widget);
         void clearRuntime();
+        void stopAllAutoMotion();
         void selectRobot(const QString& robotId);
         void updateRowsFromScene();
         void refreshCollisionMonitor();
@@ -53,6 +54,14 @@ namespace robot_qt_viewer
         void collisionGeometryVisibleChanged(bool visible);
 
     private:
+        struct AutoMotionState
+        {
+            bool enabled = false;
+            double amplitude = 30.0;
+            double speed = 1.0;
+        };
+
+        void handleRobotSelectionChanged(const QString& robotId);
         void handleJointDisplayValueChanged(
             const QString& jointName,
             const QString& jointType,
@@ -68,6 +77,8 @@ namespace robot_qt_viewer
         void stopTrajectory();
         void stepTrajectory();
         void updateTrajectoryStatus();
+        void refreshRobotSelection();
+        QString firstAvailableRobotId() const;
         void refreshCollisionResults(const QString& detectorId);
         QString preferredCollisionDetectorId() const;
 
@@ -79,6 +90,7 @@ namespace robot_qt_viewer
         QString m_selectedCollisionDetectorId;
         QHash<QString, QStringList> m_robotMovableJoints;
         QHash<QString, QStringList> m_robotMovableJointTypes;
+        QHash<QString, AutoMotionState> m_autoMotionStates;
         bool m_updating = false;
     };
 }

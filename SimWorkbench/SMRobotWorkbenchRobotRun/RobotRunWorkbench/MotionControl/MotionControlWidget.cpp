@@ -17,12 +17,106 @@
 #include <QStringList>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cmath>
+
+namespace
+{
+    struct JointDisplayRange
+    {
+        double minimum = -100.0;
+        double maximum = 100.0;
+        double sliderScale = 10.0;
+        int decimals = 3;
+        double singleStep = 0.01;
+        QString suffix = " raw";
+    };
+
+    bool isParallelPoseAngular(const QString& jointName)
+    {
+        return jointName == QStringLiteral("parallel.pose.roll") ||
+            jointName == QStringLiteral("parallel.pose.pitch") ||
+            jointName == QStringLiteral("parallel.pose.yaw");
+    }
+
+    bool isParallelPoseLinear(const QString& jointName)
+    {
+        return jointName == QStringLiteral("parallel.pose.x") ||
+            jointName == QStringLiteral("parallel.pose.y") ||
+            jointName == QStringLiteral("parallel.pose.z");
+    }
+
+    bool isParallelActuator(const QString& jointName)
+    {
+        return jointName.startsWith(QStringLiteral("parallel.actuator."));
+    }
+
+    void calibrateActuatorRange(
+        QSlider* slider,
+        QDoubleSpinBox* valueSpin,
+        double sliderScale,
+        bool& rangeCalibrated,
+        double length)
+    {
+        if(!std::isfinite(length) ||
+            length <= 0.0 ||
+            slider == nullptr ||
+            valueSpin == nullptr) {
+            return;
+        }
+
+        if(rangeCalibrated &&
+            length >= valueSpin->minimum() &&
+            length <= valueSpin->maximum()) {
+            return;
+        }
+
+        const double minimum = std::max(0.001, length * 0.5);
+        const double maximum = std::max(minimum + 0.001, length * 1.5);
+        slider->setRange(
+            static_cast<int>(minimum * sliderScale),
+            static_cast<int>(maximum * sliderScale));
+        valueSpin->setRange(minimum, maximum);
+        rangeCalibrated = true;
+    }
+
+    JointDisplayRange jointDisplayRangeFor(const QString& jointName, bool revolute)
+    {
+        if(isParallelPoseAngular(jointName)) {
+            return JointDisplayRange{ -45.0, 45.0, 10.0, 3, 1.0, " deg" };
+        }
+        if(isParallelPoseLinear(jointName)) {
+            return JointDisplayRange{ -1.0, 1.0, 1000.0, 4, 0.001, " m" };
+        }
+        if(isParallelActuator(jointName)) {
+            return JointDisplayRange{ 0.001, 2.0, 1000.0, 4, 0.001, " m" };
+        }
+        if(revolute) {
+            return JointDisplayRange{ -180.0, 180.0, 10.0, 3, 1.0, " deg" };
+        }
+        return JointDisplayRange{};
+    }
+}
+
 MotionControlWidget::MotionControlWidget(QWidget* parent)
     : QWidget(parent)
 {
     auto* motionLayout = new QVBoxLayout(this);
     motionLayout->setContentsMargins(10, 10, 10, 10);
     motionLayout->setSpacing(8);
+
+    motionLayout->addWidget(robot_qt_viewer::makePanelTitle("Robot Selection", this));
+    m_robotCombo = new QComboBox(this);
+    robot_qt_viewer::makeHorizontallyCompressible(m_robotCombo);
+    m_robotCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    connect(m_robotCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+        this, [this]() {
+            if(m_updatingUi || m_robotCombo == nullptr) {
+                return;
+            }
+            emit robotSelectionChanged(currentRobotId());
+        });
+    motionLayout->addWidget(m_robotCombo);
 
     motionLayout->addWidget(robot_qt_viewer::makePanelTitle("Joint Control", this));
     m_jointRobotLabel = new QLabel("No robot selected", this);
@@ -208,6 +302,46 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
     setCollisionMonitoringAvailable(false);
 }
 
+void MotionControlWidget::setRobots(const QVector<RobotItem>& robots, const QString& preferredRobotId)
+{
+    if(m_robotCombo == nullptr) {
+        return;
+    }
+
+    const QString previousId = currentRobotId();
+    const QString targetId = !preferredRobotId.isEmpty() ? preferredRobotId : previousId;
+
+    QSignalBlocker blocker(m_robotCombo);
+    const bool wasUpdating = m_updatingUi;
+    m_updatingUi = true;
+    m_robotCombo->clear();
+
+    int targetIndex = -1;
+    for(const RobotItem& robot : robots) {
+        const QString label = robot.label.isEmpty() ? robot.id : robot.label;
+        m_robotCombo->addItem(label, robot.id);
+        if(robot.id == targetId) {
+            targetIndex = m_robotCombo->count() - 1;
+        }
+    }
+
+    if(targetIndex < 0 && m_robotCombo->count() > 0) {
+        targetIndex = 0;
+    }
+    if(targetIndex >= 0) {
+        m_robotCombo->setCurrentIndex(targetIndex);
+    }
+    m_robotCombo->setEnabled(m_robotCombo->count() > 0);
+    m_updatingUi = wasUpdating;
+}
+
+QString MotionControlWidget::currentRobotId() const
+{
+    return m_robotCombo != nullptr
+        ? m_robotCombo->currentData().toString()
+        : QString();
+}
+
 void MotionControlWidget::setRobotId(const QString& robotId)
 {
     if(m_jointRobotLabel == nullptr) {
@@ -227,7 +361,6 @@ void MotionControlWidget::setJoints(const QStringList& jointNames, const QString
         const QString jointType = i < jointTypes.size() ? jointTypes.at(i) : QString();
         addJointRow(jointNames.at(i), jointType);
     }
-    setAutoMotionChecked(false);
     m_updatingUi = false;
     setMotionActionsEnabled(!m_jointRows.empty());
 }
@@ -241,9 +374,17 @@ void MotionControlWidget::setJointDisplayValue(const QString& jointName, double 
 
         QSignalBlocker sliderBlocker(row.slider);
         QSignalBlocker spinBlocker(row.valueSpin);
+        if(valueValid && isParallelActuator(row.jointName)) {
+            calibrateActuatorRange(
+                row.slider,
+                row.valueSpin,
+                row.sliderScale,
+                row.rangeCalibrated,
+                displayValue);
+        }
         if(row.slider != nullptr) {
             row.slider->setEnabled(valueValid);
-            row.slider->setValue(valueValid ? static_cast<int>(displayValue * 10.0) : 0);
+            row.slider->setValue(valueValid ? static_cast<int>(displayValue * row.sliderScale) : 0);
         }
         if(row.valueSpin != nullptr) {
             row.valueSpin->setEnabled(valueValid);
@@ -267,6 +408,25 @@ void MotionControlWidget::setMotionActionsEnabled(bool enabled)
     if(m_applyInitialPoseButton != nullptr) {
         m_applyInitialPoseButton->setEnabled(enabled);
     }
+}
+
+void MotionControlWidget::setAutoMotionControls(bool checked, double amplitude, double speed)
+{
+    const bool wasUpdating = m_updatingUi;
+    m_updatingUi = true;
+    if(m_autoMotionCheck != nullptr) {
+        QSignalBlocker blocker(m_autoMotionCheck);
+        m_autoMotionCheck->setChecked(checked);
+    }
+    if(m_autoAmplitudeSpin != nullptr) {
+        QSignalBlocker blocker(m_autoAmplitudeSpin);
+        m_autoAmplitudeSpin->setValue(amplitude);
+    }
+    if(m_autoSpeedSpin != nullptr) {
+        QSignalBlocker blocker(m_autoSpeedSpin);
+        m_autoSpeedSpin->setValue(speed);
+    }
+    m_updatingUi = wasUpdating;
 }
 
 void MotionControlWidget::setAutoMotionChecked(bool checked)
@@ -466,7 +626,10 @@ void MotionControlWidget::clearJointRows()
 {
     for(const JointControlRow& row : m_jointRows) {
         if(row.rowWidget != nullptr) {
-            row.rowWidget->deleteLater();
+            if(m_jointRowsLayout != nullptr) {
+                m_jointRowsLayout->removeWidget(row.rowWidget);
+            }
+            delete row.rowWidget;
         }
     }
     m_jointRows.clear();
@@ -479,6 +642,7 @@ void MotionControlWidget::addJointRow(const QString& jointName, const QString& j
     }
 
     const bool revolute = isRevoluteJoint(jointType);
+    const JointDisplayRange range = jointDisplayRangeFor(jointName, revolute);
     const int rowIndex = m_jointRows.size();
 
     auto* rowWidget = new QFrame(m_jointRowsWidget);
@@ -496,16 +660,18 @@ void MotionControlWidget::addJointRow(const QString& jointName, const QString& j
     rowLayout->addWidget(nameLabel, 0, 0, 1, 2);
 
     auto* slider = new QSlider(Qt::Horizontal, rowWidget);
-    slider->setRange(revolute ? -1800 : -1000, revolute ? 1800 : 1000);
+    slider->setRange(
+        static_cast<int>(range.minimum * range.sliderScale),
+        static_cast<int>(range.maximum * range.sliderScale));
     slider->setMinimumWidth(40);
     slider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     rowLayout->addWidget(slider, 1, 0);
 
     auto* spin = new QDoubleSpinBox(rowWidget);
-    spin->setDecimals(3);
-    spin->setRange(revolute ? -180.0 : -100.0, revolute ? 180.0 : 100.0);
-    spin->setSingleStep(revolute ? 1.0 : 0.01);
-    spin->setSuffix(revolute ? " deg" : " raw");
+    spin->setDecimals(range.decimals);
+    spin->setRange(range.minimum, range.maximum);
+    spin->setSingleStep(range.singleStep);
+    spin->setSuffix(range.suffix);
     spin->setMinimumWidth(82);
     spin->setMaximumWidth(118);
     spin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
@@ -518,8 +684,8 @@ void MotionControlWidget::addJointRow(const QString& jointName, const QString& j
         m_jointRowsLayout->addWidget(rowWidget);
     }
 
-    connect(slider, &QSlider::valueChanged, this, [this, rowIndex](int value) {
-        applyRowDisplayValue(rowIndex, static_cast<double>(value) / 10.0);
+    connect(slider, &QSlider::valueChanged, this, [this, rowIndex, sliderScale = range.sliderScale](int value) {
+        applyRowDisplayValue(rowIndex, static_cast<double>(value) / sliderScale);
     });
     connect(spin, static_cast<void(QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), this, [this, rowIndex](double value) {
         applyRowDisplayValue(rowIndex, value);
@@ -531,6 +697,7 @@ void MotionControlWidget::addJointRow(const QString& jointName, const QString& j
     row.rowWidget = rowWidget;
     row.slider = slider;
     row.valueSpin = spin;
+    row.sliderScale = range.sliderScale;
     m_jointRows.push_back(row);
 }
 
@@ -543,7 +710,7 @@ void MotionControlWidget::applyRowDisplayValue(int rowIndex, double displayValue
     JointControlRow& row = m_jointRows[rowIndex];
     m_updatingUi = true;
     if(row.slider != nullptr) {
-        row.slider->setValue(static_cast<int>(displayValue * 10.0));
+        row.slider->setValue(static_cast<int>(displayValue * row.sliderScale));
     }
     if(row.valueSpin != nullptr) {
         row.valueSpin->setValue(displayValue);

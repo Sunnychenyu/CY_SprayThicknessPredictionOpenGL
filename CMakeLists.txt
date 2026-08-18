@@ -10,7 +10,7 @@ cmake_minimum_required( VERSION 3.20 )
 ######################################################################################
 #   Define the project
 project( RobotSimulator2026
-    VERSION 1.0.0
+    VERSION 1.0.2
     LANGUAGES CXX C
     DESCRIPTION "Robot Simulator!"
 )
@@ -28,6 +28,10 @@ if(NOT RS2026_LICENSE_ENFORCEMENT_MODE MATCHES "^(Enforce|ReportOnly|Disabled)$"
         "RS2026_LICENSE_ENFORCEMENT_MODE must be Enforce, ReportOnly, or Disabled.")
 endif()
 message(STATUS "RS2026 license enforcement mode: ${RS2026_LICENSE_ENFORCEMENT_MODE}")
+set(SMROBOT_RUNTIME_LICENSE_SOURCE_DIR "" CACHE PATH
+    "Optional directory containing .LIC files to deploy beside built applications.")
+set(SMROBOT_RUNTIME_LICENSE_OVERRIDE_DIR "" CACHE PATH
+    "Optional explicit runtime license directory overriding packaged defaults.")
 
 ######################################################################################
 #   Project Information
@@ -55,6 +59,8 @@ get_filename_component(SMROBOT_DATA_ROOT "${SMROBOT_DATA_ROOT}" ABSOLUTE)
 ######################################################################################
 #   Compile language, output directory setting.
 include( ProjectSetting )
+include( SMRobotRuntimeLicense )
+smrobot_prepare_standard_runtime_licenses()
 
 include( FuncDef_GetAllPackageNames )
 include( FuncDef_GetPackageDeps )
@@ -85,6 +91,13 @@ option( DisplayTargetProperties "Whether display the targets' properties" OFF )
 
 #   Define user and find third-party packages
 include( UserConfig )
+
+# OpenGL is a direct source-build dependency of Common targets. Some user
+# profiles used to obtain OpenGL::GL indirectly through PCL/VTK, so ensure the
+# imported target exists independently of optional third-party providers.
+if("OpenGL" IN_LIST RS2026_REQUIRED_PACKAGES AND NOT TARGET OpenGL::GL)
+    find_package( OpenGL REQUIRED )
+endif()
 
 if(NOT UsingPrebuilt_Common)
     include(SourceLicenseFacadeProvider)

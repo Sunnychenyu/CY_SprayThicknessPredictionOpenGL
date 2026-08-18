@@ -13,7 +13,7 @@ list( APPEND USER_GROUP
     USER_TANGTANG_3090_Ubuntu
     USER_TANGTANG_3090_Windows
 
-    USER_CHENYU_5080_Windows
+    USER_TANGTANG_4090_Windows
     USER_TANGTANG_4090_Ubuntu2204
 
     USER_TANGTANG_14S_Ubuntu
@@ -22,48 +22,6 @@ list( APPEND USER_GROUP
     USER_TANGTANG_p15v3_Windows
     USER_TANGTANG_p15v3_Ubuntu2204
 )
-
-
-# foreach(user ${USER_GROUP})
-#     string(REPLACE "_" " " user_desc ${user})
-#     option(${user} "Enable build config for ${user_desc}" OFF)
-#     list( APPEND User_Options ${user} )
-# endforeach()
-
-
-
-
-# #   Only one option must be set to ON
-# set( at_least_one_ON FALSE )
-# foreach(option IN LISTS User_Options)
-#     if(${option})
-#         set(at_least_one_ON TRUE)
-#     endif()
-# endforeach()
-
-# if(NOT at_least_one_ON)
-#     message( FATAL_ERROR "Error: Only one option must be set to ON.\n"
-#                         "Optional options: ${User_Options}" )
-#     return()
-# endif()
-
-
-
-
-
-# #   Find packages for each user/computer
-# foreach( each_user_ ${USER_GROUP} )
-#     if( ${each_user_} )
-#         message( STATUS "Current User is ${each_user_}. " )
-#         string( REGEX REPLACE "USER_" "" user_config_filename ${each_user_} )
-#         message( STATUS "User's config filename is ${user_config_filename}." )
-
-#         include( UserConfigs/${user_config_filename} )
-#     endif()
-# endforeach()
-
-
-
 
 
 

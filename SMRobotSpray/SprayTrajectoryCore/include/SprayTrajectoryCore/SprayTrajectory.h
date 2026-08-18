@@ -63,9 +63,6 @@ namespace spraytrajectory
     class SprayTrajectorySampler
     {
     public:
-        static std::vector<SprayTrajectorySample> originalSamples(
-            const SprayTrajectory& trajectory);
-
         static std::vector<SprayTrajectorySample> sample(
             const SprayTrajectory& trajectory,
             double timeStep);

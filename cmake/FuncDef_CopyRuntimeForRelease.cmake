@@ -144,6 +144,10 @@ function(copy_runtime_dlls TARGET_NAME)
             )
         endif()
     endif()
+
+    if(COMMAND smrobot_deploy_runtime_licenses)
+        smrobot_deploy_runtime_licenses(${TARGET_NAME})
+    endif()
 endfunction()
 
 

@@ -17,6 +17,8 @@ set(SOURCES
     RobotQtViewerEventHub.cpp
     RobotQtViewerEventHub.h
     RobotQtViewerEvents.h
+    RobotQtViewerFileDialog.cpp
+    RobotQtViewerFileDialog.h
     RobotQtViewerAppController.cpp
     RobotQtViewerAppController.h
     RobotQtViewerSelectionModel.cpp
@@ -52,6 +54,7 @@ target_link_libraries(${TARGET_NAME}
     PUBLIC
         Qt5::Widgets
         Common::Utility
+        SMRobotCore::RobotIO
         SMRobotPlatform::SimulationProject
         SMRobotPlatform::VisualizationSDK
 )
@@ -72,6 +75,7 @@ if(ExportPacakgeSMRobotWorkbenchCommon)
     set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
         Qt5::Widgets
         Common::Utility
+        SMRobotCore::RobotIO
         SMRobotPlatform::SimulationProject
         SMRobotPlatform::VisualizationSDK
     )

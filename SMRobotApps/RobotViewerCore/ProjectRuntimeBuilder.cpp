@@ -16,6 +16,7 @@
 #include <data_path.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -82,6 +83,199 @@ namespace
         std::ostringstream stream;
         stream << std::fixed << std::setprecision(6) << value;
         return stream.str();
+    }
+
+    int parallelPoseVariableIndex(const std::string& name)
+    {
+        static const char* kNames[] = {
+            "parallel.pose.x",
+            "parallel.pose.y",
+            "parallel.pose.z",
+            "parallel.pose.roll",
+            "parallel.pose.pitch",
+            "parallel.pose.yaw"
+        };
+        for(int i = 0; i < 6; ++i) {
+            if(name == kNames[i]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    int parallelActuatorIndex(const std::string& name)
+    {
+        const std::string prefix = "parallel.actuator.";
+        if(name.rfind(prefix, 0) != 0) {
+            return -1;
+        }
+
+        const std::string suffix = name.substr(prefix.size());
+        if(suffix.size() != 1 || suffix[0] < '1' || suffix[0] > '6') {
+            return -1;
+        }
+        return suffix[0] - '1';
+    }
+
+    double parallelPoseValue(const kine::StewartPlatformPose& pose, int index)
+    {
+        switch(index) {
+        case 0:
+            return pose.x;
+        case 1:
+            return pose.y;
+        case 2:
+            return pose.z;
+        case 3:
+            return pose.roll;
+        case 4:
+            return pose.pitch;
+        case 5:
+            return pose.yaw;
+        default:
+            return 0.0;
+        }
+    }
+
+    void setParallelPoseValue(kine::StewartPlatformPose& pose, int index, double value)
+    {
+        switch(index) {
+        case 0:
+            pose.x = value;
+            break;
+        case 1:
+            pose.y = value;
+            break;
+        case 2:
+            pose.z = value;
+            break;
+        case 3:
+            pose.roll = value;
+            break;
+        case 4:
+            pose.pitch = value;
+            break;
+        case 5:
+            pose.yaw = value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    void syncParallelPlatformTransform(RuntimeRobot& runtime)
+    {
+        runtime.baseTransform = runtime.parallelHomeBaseTransform;
+    }
+
+    void applyParallelActuatorJointValues(RuntimeRobot& runtime)
+    {
+        if(!runtime.instance) {
+            return;
+        }
+
+        for(std::size_t index = 0; index < runtime.parallelActuatorLengths.size(); ++index) {
+            const int dofIndex = runtime.parallelActuatorDofIndices[index];
+            if(dofIndex < 0) {
+                continue;
+            }
+
+            const double travel =
+                runtime.parallelActuatorSigns[index] *
+                (runtime.parallelActuatorLengths[index] -
+                    runtime.parallelActuatorHomeLengths[index]);
+            runtime.instance->setJoint(static_cast<std::size_t>(dofIndex), travel);
+        }
+    }
+
+    bool refreshParallelActuatorLengths(RuntimeRobot& runtime)
+    {
+        std::string error;
+        const bool ok = kine::StewartPlatformKinematics::computeActuatorLengths(
+            runtime.parallelGeometry,
+            runtime.parallelPose,
+            runtime.parallelActuatorLengths,
+            &error);
+        if(!ok) {
+            LOG_WARNING("rs2026") << "Failed to update Stewart actuator lengths: " << error;
+        }
+        return ok;
+    }
+
+    bool setParallelControlValue(RuntimeRobot& runtime, const std::string& name, double value)
+    {
+        if(!runtime.parallelControlEnabled) {
+            return false;
+        }
+
+        const int poseIndex = parallelPoseVariableIndex(name);
+        if(poseIndex >= 0) {
+            setParallelPoseValue(runtime.parallelPose, poseIndex, value);
+            if(!refreshParallelActuatorLengths(runtime)) {
+                return false;
+            }
+            applyParallelActuatorJointValues(runtime);
+            syncParallelPlatformTransform(runtime);
+            return true;
+        }
+
+        const int actuatorIndex = parallelActuatorIndex(name);
+        if(actuatorIndex >= 0) {
+            if(!std::isfinite(value) || value <= 0.0) {
+                const std::size_t index = static_cast<std::size_t>(actuatorIndex);
+                LOG_WARNING("rs2026") << "Rejected Stewart actuator target length: "
+                    << name << "=" << value << " m"
+                    << ", home=" << runtime.parallelActuatorHomeLengths[index] << " m"
+                    << ", current=" << runtime.parallelActuatorLengths[index] << " m";
+                return false;
+            }
+
+            std::array<double, 6> requestedLengths = runtime.parallelActuatorLengths;
+            requestedLengths[static_cast<std::size_t>(actuatorIndex)] = value;
+
+            kine::StewartPlatformPose solvedPose;
+            std::string error;
+            if(!kine::StewartPlatformKinematics::solvePoseFromLengths(
+                   runtime.parallelGeometry,
+                   requestedLengths,
+                   runtime.parallelPose,
+                   solvedPose,
+                   &error)) {
+                LOG_WARNING("rs2026") << "Failed to solve Stewart pose from actuator lengths: "
+                    << error;
+                return false;
+            }
+
+            runtime.parallelPose = solvedPose;
+            runtime.parallelActuatorLengths = requestedLengths;
+            refreshParallelActuatorLengths(runtime);
+            applyParallelActuatorJointValues(runtime);
+            syncParallelPlatformTransform(runtime);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool getParallelControlValue(const RuntimeRobot& runtime, const std::string& name, double& value)
+    {
+        if(!runtime.parallelControlEnabled) {
+            return false;
+        }
+
+        const int poseIndex = parallelPoseVariableIndex(name);
+        if(poseIndex >= 0) {
+            value = parallelPoseValue(runtime.parallelPose, poseIndex);
+            return true;
+        }
+
+        const int actuatorIndex = parallelActuatorIndex(name);
+        if(actuatorIndex >= 0) {
+            value = runtime.parallelActuatorLengths[static_cast<std::size_t>(actuatorIndex)];
+            return true;
+        }
+
+        return false;
     }
 
     std::string fileTimestampKey(const std::filesystem::path& path)
@@ -461,39 +655,12 @@ namespace
         return material;
     }
 
-    void makeModelTwoSided(assetcore::ModelDesc& model)
-    {
-        for(assetcore::SubMeshDesc& subMesh : model.subMeshes()) {
-            assetcore::GeometryDesc& geometry = subMesh.geometry;
-            if(geometry.indices.empty()) {
-                continue;
-            }
-            const std::size_t originalIndexCount = geometry.indices.size();
-            geometry.indices.reserve(originalIndexCount * 2);
-            for(std::size_t index = 0; index + 2 < originalIndexCount; index += 3) {
-                geometry.indices.push_back(geometry.indices[index]);
-                geometry.indices.push_back(geometry.indices[index + 2]);
-                geometry.indices.push_back(geometry.indices[index + 1]);
-            }
-        }
-    }
-
     std::shared_ptr<rendercore::Material> makeSceneObjectHighlightMaterial()
     {
         auto material = std::make_shared<rendercore::Material>();
         material->baseColor = Eigen::Vector4f(1.0f, 0.25f, 0.05f, 1.0f);
         material->emissiveColor = Eigen::Vector3f(0.2f, 0.04f, 0.01f);
         material->specular = Eigen::Vector3f(0.35f, 0.25f, 0.2f);
-        material->shininess = 32.0f;
-        return material;
-    }
-
-    std::shared_ptr<rendercore::Material> makeSceneObjectCollisionHighlightMaterial()
-    {
-        auto material = std::make_shared<rendercore::Material>();
-        material->baseColor = Eigen::Vector4f(0.95f, 0.08f, 0.04f, 1.0f);
-        material->emissiveColor = Eigen::Vector3f(0.24f, 0.015f, 0.01f);
-        material->specular = Eigen::Vector3f(0.35f, 0.12f, 0.1f);
         material->shininess = 32.0f;
         return material;
     }
@@ -698,15 +865,22 @@ bool ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
 
 robot::RobotModel ProjectRuntimeBuilder::loadSingleRobot(
     const std::filesystem::path& path,
-    const std::string& sourceType)
+    const std::string& sourceType,
+    int sourceModelIndex)
 {
     const std::string robotPath = pathToUtf8(path);
     auto robots = IRobotLoader::get_robots(robotTypeFromDesc(sourceType), robotPath);
     if(robots.empty()) {
         throw std::runtime_error("Failed to load robot: " + robotPath);
     }
+    if(sourceModelIndex < 0 || static_cast<std::size_t>(sourceModelIndex) >= robots.size()) {
+        throw std::runtime_error(
+            "Robot source model index " + std::to_string(sourceModelIndex) +
+            " is out of range for " + robotPath +
+            " (models=" + std::to_string(robots.size()) + ")");
+    }
 
-    return robots.front();
+    return robots[static_cast<std::size_t>(sourceModelIndex)];
 }
 
 void ProjectRuntimeBuilder::applyInitialJoints(
@@ -797,19 +971,16 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     profile.resolveMs = elapsedMilliseconds(resolveStart);
 
     const auto assetLoadStart = std::chrono::steady_clock::now();
-    const auto sourceModelDesc = assetcore::AssetManager::instance().loadModel(
+    auto modelDesc = assetcore::AssetManager::instance().loadModel(
         pathToUtf8(objectPath),
         static_cast<float>(objectDesc.visualScale));
     profile.assetLoadMs = elapsedMilliseconds(assetLoadStart);
-    if(!sourceModelDesc) {
+    if(!modelDesc) {
         throw std::runtime_error("Failed to load scene object model: " + pathToUtf8(objectPath));
     }
-    auto modelDesc = std::make_shared<assetcore::ModelDesc>(*sourceModelDesc);
     profile.modelVertices = countModelVertices(*modelDesc);
     profile.modelIndices = countModelIndices(*modelDesc);
-    if(objectDesc.objectType == "workpiece") {
-        makeModelTwoSided(*modelDesc);
-    }
+
     const auto renderBuildStart = std::chrono::steady_clock::now();
     auto renderModel = rendercore::ModelManager::instance().buildModelFromDesc(*modelDesc);
     profile.renderBuildMs = elapsedMilliseconds(renderBuildStart);
@@ -820,10 +991,8 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     const auto visualSetupStart = std::chrono::steady_clock::now();
     ensureModelMaterial(renderModel, makeSceneObjectMaterial());
     runtime.visualModel = renderModel;
-    runtime.pickModel = sourceModelDesc;
     runtime.originalMaterials = captureModelMaterials(renderModel);
     runtime.highlightMaterial = makeSceneObjectHighlightMaterial();
-    runtime.collisionHighlightMaterial = makeSceneObjectCollisionHighlightMaterial();
     runtime.visualNode = std::make_shared<VisibleModelNode>(renderModel);
     runtime.visualNode->setName(objectDesc.id);
     runtime.visualNode->setVisible(objectDesc.visible);
@@ -1116,6 +1285,10 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
 
 bool ProjectRuntimeBuilder::setJointValue(RuntimeRobot& runtime, const std::string& jointName, double value)
 {
+    if(setParallelControlValue(runtime, jointName, value)) {
+        return true;
+    }
+
     auto it = runtime.model.jointNameToIndex.find(jointName);
     if(it == runtime.model.jointNameToIndex.end()) {
         return false;
@@ -1132,6 +1305,10 @@ bool ProjectRuntimeBuilder::setJointValue(RuntimeRobot& runtime, const std::stri
 
 bool ProjectRuntimeBuilder::getJointValue(const RuntimeRobot& runtime, const std::string& jointName, double& value)
 {
+    if(getParallelControlValue(runtime, jointName, value)) {
+        return true;
+    }
+
     auto it = runtime.model.jointNameToIndex.find(jointName);
     if(it == runtime.model.jointNameToIndex.end()) {
         return false;
@@ -1154,6 +1331,15 @@ bool ProjectRuntimeBuilder::getJointValue(const RuntimeRobot& runtime, const std
 void ProjectRuntimeBuilder::applyAutoMotion(RuntimeRobot& runtime, double timeSeconds)
 {
     if(!runtime.autoMotionEnabled) {
+        return;
+    }
+
+    if(runtime.parallelControlEnabled) {
+        runtime.parallelPose.z =
+            runtime.autoMotionAmplitude * std::sin(timeSeconds * runtime.autoMotionSpeed);
+        refreshParallelActuatorLengths(runtime);
+        applyParallelActuatorJointValues(runtime);
+        syncParallelPlatformTransform(runtime);
         return;
     }
 

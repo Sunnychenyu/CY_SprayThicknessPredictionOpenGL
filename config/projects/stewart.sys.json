@@ -1,0 +1,348 @@
+{
+    "compat": {
+        "sourceVersion": 2,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [],
+            "attachments": [],
+            "mountFrames": []
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "上动平台-1"
+                            ],
+                            "includeLinksB": [
+                                "喷枪-1"
+                            ],
+                            "linkA": "上动平台-1",
+                            "linkB": "喷枪-1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "上动平台-1"
+                            ],
+                            "includeLinksB": [
+                                "直线机构-1"
+                            ],
+                            "linkA": "上动平台-1",
+                            "linkB": "直线机构-1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "上动平台-1"
+                            ],
+                            "includeLinksB": [
+                                "固定套筒-1"
+                            ],
+                            "linkA": "上动平台-1",
+                            "linkB": "固定套筒-1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "上动平台-1"
+                            ],
+                            "includeLinksB": [
+                                "下定平台-2"
+                            ],
+                            "linkA": "上动平台-1",
+                            "linkB": "下定平台-2",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "工件-2"
+                            ],
+                            "includeLinksB": [
+                                "喷枪-1"
+                            ],
+                            "linkA": "工件-2",
+                            "linkB": "喷枪-1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "工件-2"
+                            ],
+                            "includeLinksB": [
+                                "直线机构-1"
+                            ],
+                            "linkA": "工件-2",
+                            "linkB": "直线机构-1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "工件-2"
+                            ],
+                            "includeLinksB": [
+                                "固定套筒-1"
+                            ],
+                            "linkA": "工件-2",
+                            "linkB": "固定套筒-1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "工件-2"
+                            ],
+                            "includeLinksB": [
+                                "下定平台-2"
+                            ],
+                            "linkA": "工件-2",
+                            "linkB": "下定平台-2",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "3_0_2_0_2",
+                            "robotB": "3_0_2_0_1",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [],
+                    "type": "SelectedObjects"
+                }
+            ],
+            "objectModelSelections": [],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": []
+            },
+            "robotLinkModelSelections": [],
+            "robotOverrides": [],
+            "selectionSets": []
+        },
+        "objects": [],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "3_0_2_0_1",
+                "initialJoints": [],
+                "name": "3.0_2.0_1",
+                "sourceModelIndex": 0,
+                "sourcePath": "data/Simscape/stewart/3.0.xml",
+                "sourceType": "simscape",
+                "visible": true
+            },
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "3_0_2_0_2",
+                "initialJoints": [],
+                "name": "3.0_2.0_2",
+                "sourceModelIndex": 1,
+                "sourcePath": "data/Simscape/stewart/3.0.xml",
+                "sourceType": "simscape",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColorMode": "theme",
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {},
+            "attachments": {},
+            "objects": {},
+            "pointClouds": {},
+            "robots": {
+                "3_0_2_0_1": {
+                    "visible": true
+                },
+                "3_0_2_0_2": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

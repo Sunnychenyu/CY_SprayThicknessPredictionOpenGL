@@ -1,7 +1,6 @@
 #include <SprayTrajectoryCore/SprayTrajectory.h>
 
 #include <algorithm>
-#include <cmath>
 
 namespace spraytrajectory
 {
@@ -42,70 +41,6 @@ namespace spraytrajectory
             for (size_t i = 0; i < a.size(); ++i)
                 value[i] = a[i] * (1.0 - t) + b[i] * t;
             return value;
-        }
-
-        SprayTrajectorySample evaluatePoints(
-            const std::vector<SprayPathPoint>& points,
-            double time)
-        {
-            if (points.empty())
-                return {};
-
-            if (time <= points.front().time)
-            {
-                const auto& point = points.front();
-                return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                    point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
-            }
-
-            if (time >= points.back().time)
-            {
-                const auto& point = points.back();
-                return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                    point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
-            }
-
-            auto next = std::lower_bound(
-                points.begin(),
-                points.end(),
-                time,
-                [](const SprayPathPoint& point, double value)
-                {
-                    return point.time < value;
-                });
-
-            if (next == points.begin())
-            {
-                const auto& point = *next;
-                return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                    point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
-            }
-
-            const auto prev = next - 1;
-            const double span = next->time - prev->time;
-            const double alpha = span > 0.0 ? clamp01((time - prev->time) / span) : 0.0;
-
-            SprayTrajectorySample sample;
-            sample.time = time;
-            sample.tcpPose = interpolatePose(prev->tcpPose, next->tcpPose, alpha);
-            sample.jointValues = interpolateJoints(prev->jointValues, next->jointValues, alpha);
-            sample.sprayEnabled = alpha < 0.5 ? prev->sprayEnabled : next->sprayEnabled;
-            sample.processId = alpha < 0.5 ? prev->processId : next->processId;
-            sample.targetDistance = prev->targetDistance * (1.0 - alpha) + next->targetDistance * alpha;
-            Eigen::Vector3d targetNormal = prev->targetNormal * (1.0 - alpha) + next->targetNormal * alpha;
-            sample.targetNormal = targetNormal.norm() > 1.0e-12
-                ? targetNormal.normalized()
-                : Eigen::Vector3d::UnitZ();
-            sample.workpieceRegionId = alpha < 0.5
-                ? prev->workpieceRegionId
-                : next->workpieceRegionId;
-            return sample;
-        }
-
-        SprayTrajectorySample makeSample(const SprayPathPoint& point)
-        {
-            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
         }
     }
 
@@ -149,18 +84,54 @@ namespace spraytrajectory
         double time)
     {
         const auto points = trajectory.flattenedPoints();
-        return evaluatePoints(points, time);
-    }
+        if (points.empty())
+            return {};
 
-    std::vector<SprayTrajectorySample> SprayTrajectorySampler::originalSamples(
-        const SprayTrajectory& trajectory)
-    {
-        const auto points = trajectory.flattenedPoints();
-        std::vector<SprayTrajectorySample> samples;
-        samples.reserve(points.size());
-        for(const auto& point : points)
-            samples.push_back(makeSample(point));
-        return samples;
+        if (time <= points.front().time)
+        {
+            const auto& point = points.front();
+            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
+                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
+        }
+
+        if (time >= points.back().time)
+        {
+            const auto& point = points.back();
+            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
+                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
+        }
+
+        auto next = std::lower_bound(
+            points.begin(),
+            points.end(),
+            time,
+            [](const SprayPathPoint& point, double value)
+            {
+                return point.time < value;
+            });
+
+        if (next == points.begin())
+        {
+            const auto& point = *next;
+            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
+                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
+        }
+
+        const auto prev = next - 1;
+        const double span = next->time - prev->time;
+        const double alpha = span > 0.0 ? clamp01((time - prev->time) / span) : 0.0;
+
+        SprayTrajectorySample sample;
+        sample.time = time;
+        sample.tcpPose = interpolatePose(prev->tcpPose, next->tcpPose, alpha);
+        sample.jointValues = interpolateJoints(prev->jointValues, next->jointValues, alpha);
+        sample.sprayEnabled = alpha < 0.5 ? prev->sprayEnabled : next->sprayEnabled;
+        sample.processId = alpha < 0.5 ? prev->processId : next->processId;
+        sample.targetDistance = prev->targetDistance * (1.0 - alpha) + next->targetDistance * alpha;
+        Eigen::Vector3d targetNormal = prev->targetNormal * (1.0 - alpha) + next->targetNormal * alpha;
+        sample.targetNormal = targetNormal.norm() > 1.0e-12 ? targetNormal.normalized() : Eigen::Vector3d::UnitZ();
+        sample.workpieceRegionId = alpha < 0.5 ? prev->workpieceRegionId : next->workpieceRegionId;
+        return sample;
     }
 
     std::vector<SprayTrajectorySample> SprayTrajectorySampler::sample(
@@ -174,13 +145,10 @@ namespace spraytrajectory
 
         const double begin = points.front().time;
         const double end = points.back().time;
-        const std::size_t estimatedSampleCount = static_cast<std::size_t>(
-            std::max(0.0, std::ceil((end - begin) / timeStep))) + 1;
-        samples.reserve(estimatedSampleCount);
         for (double t = begin; t < end; t += timeStep)
-            samples.push_back(evaluatePoints(points, t));
+            samples.push_back(evaluate(trajectory, t));
 
-        samples.push_back(evaluatePoints(points, end));
+        samples.push_back(evaluate(trajectory, end));
         return samples;
     }
 }

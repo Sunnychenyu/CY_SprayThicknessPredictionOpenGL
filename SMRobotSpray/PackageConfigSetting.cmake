@@ -16,7 +16,6 @@ set( ${PACKAGE_NAME}_PublicComponents
     SprayCore
     SprayTrajectoryCore
     SprayThicknessPrediction
-    SprayThicknessPredictionOpenGL
     SprayPathPlanning
     SprayTrajectoryOptimization
 )
@@ -38,7 +37,6 @@ set( ${PACKAGE_NAME}_Components
     SprayCore
     SprayTrajectoryCore
     SprayThicknessPrediction
-    SprayThicknessPredictionOpenGL
     SprayPathPlanning
     SprayTrajectoryOptimization
 )

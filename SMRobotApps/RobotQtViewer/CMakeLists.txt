@@ -76,6 +76,8 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
     RobotQtViewerToolSetupAppServicesAdapter.h
     RobotQtViewerViewportEventController.cpp
     RobotQtViewerViewportEventController.h
+    RobotQtViewerViewportPresentationController.cpp
+    RobotQtViewerViewportPresentationController.h
     RobotQtViewerViewportServicesAdapter.cpp
     RobotQtViewerViewportServicesAdapter.h
     RobotQtViewerLanguage.cpp
@@ -87,6 +89,7 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
 if(WIN32)
     list(APPEND ${APP_TARGET_NAME}_SHELL_SOURCES
         RobotQtViewer.rc
+        RobotQtViewerResource.h
     )
 endif()
 
@@ -136,12 +139,7 @@ set_target_properties(${APP_TARGET_NAME}
 
 if(CMAKE_SYSTEM_NAME MATCHES "Windows")
     set_property(TARGET ${APP_TARGET_NAME} PROPERTY
-        VS_DEBUGGER_ENVIRONMENT
-        "$<$<CONFIG:Debug>:${VSDebugEnvPath}>
-SMROBOT_DATA_ROOT=$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/data")
-    set_property(TARGET ${APP_TARGET_NAME} PROPERTY
-        VS_DEBUGGER_WORKING_DIRECTORY
-        "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>")
+        VS_DEBUGGER_ENVIRONMENT $<$<CONFIG:Debug>:${VSDebugEnvPath}>)
 endif()
 
 #############################################################
@@ -149,35 +147,16 @@ endif()
 #############################################################
 copy_runtime_dlls( ${APP_TARGET_NAME} )
 
-# The viewer resolves its startup project relative to the executable:
-# <application-root>/config/projects/420-red4600.sys.json.  Keep this
-# configuration data beside every multi-config build output so Debug and
-# Release have identical startup resources.
-add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/config"
-            "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/config"
-    COMMENT "Deploying viewer configuration for ${APP_TARGET_NAME}"
-    VERBATIM
-)
-
-# RenderCore discovers the embedded shader resource library at runtime. The
-# prebuilt target currently exposes an invalid aggregate include directory, so
-# deploy its configuration-specific DLL without linking its interface.
-if(TARGET SMRobotPlatform::RenderCoreShaderResources)
-    add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
-        COMMAND "$<$<CONFIG:Debug>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_FILE:SMRobotPlatform::RenderCoreShaderResources>;$<TARGET_FILE_DIR:${APP_TARGET_NAME}>>"
-        COMMAND "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_FILE:SMRobotPlatform::RenderCoreShaderResources>;$<TARGET_FILE_DIR:${APP_TARGET_NAME}>>"
-        COMMENT "Deploying RenderCore shader resource library for ${APP_TARGET_NAME}"
-        COMMAND_EXPAND_LISTS
-    )
-endif()
-
 if(TARGET CoACD::coacd AND COMMAND CoACD_CopyRuntimeDependencies)
     CoACD_CopyRuntimeDependencies(${APP_TARGET_NAME})
 endif()
 
 deploy_qt( ${APP_TARGET_NAME} )
+
+rs_example_category_enabled(_build_regression Regression ${PACKAGE_NAME})
+if(_build_regression)
+    add_subdirectory(regression)
+endif()
 
 if(ExportPacakge${PACKAGE_NAME})
     set(${APP_TARGET_NAME}_INSTALL_HEADER_STAGING_DIR ${CMAKE_CURRENT_BINARY_DIR}/install_headers)

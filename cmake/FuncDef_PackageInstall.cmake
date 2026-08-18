@@ -316,6 +316,87 @@ function(_smrobot_export_private_runtime_dependencies TARGET_NAME)
 endfunction()
 
 
+function(_smrobot_collect_private_runtime_dependency_files OUT_DEBUG OUT_RELEASE)
+    set(_runtime_queue ${ARGN})
+    set(_runtime_visited)
+    set(_runtime_files_debug)
+    set(_runtime_files_release)
+
+    while(_runtime_queue)
+        list(POP_FRONT _runtime_queue _runtime_candidate)
+
+        if(_runtime_candidate MATCHES "^\\$<LINK_ONLY:([^>]+)>$")
+            set(_runtime_candidate "${CMAKE_MATCH_1}")
+        elseif(_runtime_candidate MATCHES "^\\$<(BUILD|INSTALL)_INTERFACE:([^>]+)>$")
+            set(_runtime_candidate "${CMAKE_MATCH_2}")
+        elseif(_runtime_candidate MATCHES "^\\$<")
+            continue()
+        endif()
+
+        if(NOT TARGET "${_runtime_candidate}")
+            continue()
+        endif()
+
+        list(FIND _runtime_visited "${_runtime_candidate}" _runtime_visited_index)
+        if(NOT _runtime_visited_index EQUAL -1)
+            continue()
+        endif()
+        list(APPEND _runtime_visited "${_runtime_candidate}")
+
+        get_target_property(_runtime_type "${_runtime_candidate}" TYPE)
+        if(_runtime_type STREQUAL "SHARED_LIBRARY" OR
+           _runtime_type STREQUAL "MODULE_LIBRARY")
+            foreach(_runtime_config DEBUG RELEASE)
+                get_target_property(
+                    _runtime_file
+                    "${_runtime_candidate}"
+                    "IMPORTED_LOCATION_${_runtime_config}"
+                )
+                if(NOT _runtime_file OR _runtime_file MATCHES "-NOTFOUND$")
+                    get_target_property(
+                        _runtime_file
+                        "${_runtime_candidate}"
+                        "IMPORTED_IMPLIB_${_runtime_config}"
+                    )
+                endif()
+
+                if(_runtime_file AND NOT _runtime_file MATCHES "-NOTFOUND$")
+                    get_filename_component(_runtime_extension "${_runtime_file}" EXT)
+                    if(_runtime_extension STREQUAL ".lib")
+                        string(REGEX REPLACE "\\.lib$" ".dll" _runtime_file "${_runtime_file}")
+                    endif()
+                    if(NOT EXISTS "${_runtime_file}")
+                        message(FATAL_ERROR
+                            "Unable to install private runtime dependency for "
+                            "${_runtime_candidate}: ${_runtime_file}")
+                    endif()
+                    string(TOLOWER "${_runtime_config}" _runtime_config_lower)
+                    list(APPEND
+                        _runtime_files_${_runtime_config_lower}
+                        "${_runtime_file}"
+                    )
+                endif()
+            endforeach()
+        endif()
+
+        get_target_property(
+            _runtime_interface_dependencies
+            "${_runtime_candidate}"
+            INTERFACE_LINK_LIBRARIES
+        )
+        if(_runtime_interface_dependencies AND
+           NOT _runtime_interface_dependencies MATCHES "-NOTFOUND$")
+            list(APPEND _runtime_queue ${_runtime_interface_dependencies})
+        endif()
+    endwhile()
+
+    list(REMOVE_DUPLICATES _runtime_files_debug)
+    list(REMOVE_DUPLICATES _runtime_files_release)
+    set(${OUT_DEBUG} "${_runtime_files_debug}" PARENT_SCOPE)
+    set(${OUT_RELEASE} "${_runtime_files_release}" PARENT_SCOPE)
+endfunction()
+
+
 function(function_InstallTarget)
     # Define function arguments
     set(oneValueArgs TARGET_NAME PACKAGE_NAME PACKAGE_INTERFACE_HEADERS)
@@ -389,6 +470,11 @@ function(function_InstallTarget)
             if(ARG_PRIVATE_RUNTIME_DEPENDENCIES)
                 _smrobot_export_private_runtime_dependencies(
                     "${TARGET_NAME}"
+                    ${ARG_PRIVATE_RUNTIME_DEPENDENCIES}
+                )
+                _smrobot_collect_private_runtime_dependency_files(
+                    _smrobot_private_runtime_files_debug
+                    _smrobot_private_runtime_files_release
                     ${ARG_PRIVATE_RUNTIME_DEPENDENCIES}
                 )
             endif()
@@ -601,6 +687,20 @@ endfunction()
                             OPTIONAL
                             COMPONENT ${SDK_TARGET_INSTALL_COMPONENT}
                         )
+                        if(_smrobot_private_runtime_files_debug)
+                            install( FILES ${_smrobot_private_runtime_files_debug}
+                                DESTINATION ${PACKAGE_NAME}/bin
+                                CONFIGURATIONS Debug
+                                COMPONENT ${SDK_TARGET_INSTALL_COMPONENT}
+                            )
+                        endif()
+                        if(_smrobot_private_runtime_files_release)
+                            install( FILES ${_smrobot_private_runtime_files_release}
+                                DESTINATION ${PACKAGE_NAME}/bin
+                                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+                                COMPONENT ${SDK_TARGET_INSTALL_COMPONENT}
+                            )
+                        endif()
                     endif()
                 endif()
             endif ()

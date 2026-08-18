@@ -6,17 +6,13 @@
 #include <CustomLog/CustomLog.h>
 #include <SimulationProject/ProjectDocument.h>
 
-#include <QApplication>
 #include <QKeyEvent>
 #include <QEvent>
-#include <QMenu>
 #include <QMouseEvent>
-#include <QRubberBand>
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
 
-#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <iomanip>
@@ -76,11 +72,6 @@ namespace
     {
         return QString::fromStdString(text);
     }
-
-    int mouseDragThreshold()
-    {
-        return std::max(QApplication::startDragDistance(), 1);
-    }
 }
 
 RobotViewport::RobotViewport(QWidget* parent)
@@ -90,106 +81,16 @@ RobotViewport::RobotViewport(QWidget* parent)
     setMinimumSize(640, 480);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
-    m_rotationCenterRubberBand = new QRubberBand(QRubberBand::Rectangle, this);
 
     m_updateTimer = new QTimer(this);
     m_updateTimer->setInterval(16);
     connect(m_updateTimer, &QTimer::timeout, this, [this]() {
-        if(m_gpuPredictionBusy) {
-            return;
-        }
-        if(!m_surfaceScalarProbeEnabled) {
-            m_sceneUpdatePending = true;
-        }
         update();
     });
     m_updateTimer->start();
 }
 
 RobotViewport::~RobotViewport() = default;
-
-void RobotViewport::showViewportContextMenu(const QPoint& position)
-{
-    if(m_scene == nullptr ||
-        !m_scene->isInitialized() ||
-        m_gpuPredictionBusy) {
-        return;
-    }
-    if(m_scene->pickScreenPoint(position.x(), position.y()).valid() ||
-        m_scene->pickTriangleScreenPoint(position.x(), position.y()).valid()) {
-        return;
-    }
-
-    QMenu menu(this);
-    QAction* resetView = menu.addAction(
-        QString::fromUtf8(u8"\u91cd\u65b0\u5b9a\u4f4d"));
-    menu.addSeparator();
-    QAction* changeRotationCenter = menu.addAction(
-        QString::fromUtf8(u8"\u66f4\u6539\u65cb\u8f6c\u4e2d\u5fc3\u70b9"));
-    QAction* selectedAction = menu.exec(mapToGlobal(position));
-    if(selectedAction == resetView) {
-        m_lastMousePos = QPoint();
-        m_scene->setCameraView(ProjectSceneCameraView::Home);
-        update();
-    } else if(selectedAction == changeRotationCenter) {
-        beginRotationCenterSelection();
-    }
-}
-
-void RobotViewport::beginRotationCenterSelection()
-{
-    if(m_scene == nullptr || !m_scene->isInitialized()) {
-        return;
-    }
-
-    m_rotationCenterSelectionActive = true;
-    m_rotationCenterDragActive = false;
-    m_rotationCenterPressPos = QPoint();
-    if(m_rotationCenterRubberBand != nullptr) {
-        m_rotationCenterRubberBand->hide();
-    }
-    setCursor(Qt::CrossCursor);
-    setFocus(Qt::MouseFocusReason);
-}
-
-void RobotViewport::cancelRotationCenterSelection()
-{
-    m_rotationCenterSelectionActive = false;
-    m_rotationCenterDragActive = false;
-    m_rotationCenterPressPos = QPoint();
-    if(m_rotationCenterRubberBand != nullptr) {
-        m_rotationCenterRubberBand->hide();
-    }
-    unsetCursor();
-}
-
-bool RobotViewport::completeRotationCenterSelection(const QPoint& position)
-{
-    if(m_scene == nullptr) {
-        return false;
-    }
-    const bool changed = m_scene->setRotationCenterFromScreenPoint(position.x(), position.y());
-    if(changed) {
-        update();
-    }
-    return changed;
-}
-
-bool RobotViewport::completeRotationCenterSelection(const QRect& rectangle)
-{
-    if(m_scene == nullptr || rectangle.isEmpty()) {
-        return false;
-    }
-    const std::size_t selectedVertexCount = m_scene->setRotationCenterFromScreenRect(
-        rectangle.left(),
-        rectangle.top(),
-        rectangle.right(),
-        rectangle.bottom());
-    if(selectedVertexCount > 0) {
-        update();
-    }
-    return selectedVertexCount > 0;
-}
 
 void RobotViewport::setJointPreview(int degrees)
 {
@@ -207,7 +108,6 @@ bool RobotViewport::loadProjectDocument(
     const simulation_project::ProjectDocument& document,
     const std::filesystem::path& basePath)
 {
-    cancelRotationCenterSelection();
     const auto loadStart = std::chrono::steady_clock::now();
     m_lastError.clear();
     bool ok = true;
@@ -444,14 +344,6 @@ void RobotViewport::clearObjectFrameObjectFocus()
     }
 }
 
-void RobotViewport::focusCoatingObject(const QString& objectId, double duration)
-{
-    if(m_scene != nullptr) {
-        m_scene->focusCoatingObject(objectId.toStdString(), duration);
-        update();
-    }
-}
-
 void RobotViewport::focusMountedAttachment(const QString& attachmentId)
 {
     if(m_scene != nullptr) {
@@ -527,7 +419,6 @@ void RobotViewport::selectRobotLink(const QString& robotId, const QString& linkN
 {
     if(m_scene != nullptr) {
         m_scene->setSelectedLink(robotId.toStdString(), linkName.toStdString());
-        m_sceneUpdatePending = true;
         update();
     }
 }
@@ -547,7 +438,6 @@ void RobotViewport::selectRobotMount(const QString& robotId, const QString& link
             robotId.toStdString(),
             linkName.toStdString(),
             robotMountId.toStdString());
-        m_sceneUpdatePending = true;
         update();
     }
 }
@@ -556,7 +446,6 @@ void RobotViewport::selectSceneObject(const QString& objectId)
 {
     if(m_scene != nullptr) {
         m_scene->setSelectedSceneObject(objectId.toStdString());
-        m_sceneUpdatePending = true;
         update();
     }
 }
@@ -570,7 +459,6 @@ void RobotViewport::selectMountedAttachment(const QString& attachmentId)
 {
     if(m_scene != nullptr) {
         m_scene->setSelectedMountedAttachment(attachmentId.toStdString());
-        m_sceneUpdatePending = true;
         update();
     }
 }
@@ -1068,7 +956,6 @@ std::vector<ProjectScene::RobotLinkMaterialInfo> RobotViewport::robotLinkMateria
 
 void RobotViewport::resetCamera()
 {
-    cancelRotationCenterSelection();
     m_lastMousePos = QPoint();
     setCameraView(ProjectSceneCameraView::Home);
 }
@@ -1082,56 +969,16 @@ void RobotViewport::setCameraView(ProjectSceneCameraView view)
     }
 }
 
-void RobotViewport::focusFullScene(double duration)
-{
-    if(m_scene != nullptr) {
-        m_scene->focusFullScene(duration);
-        update();
-    }
-}
-
-void RobotViewport::setProjectionMode(ProjectSceneProjectionMode mode)
-{
-    if(m_scene != nullptr) {
-        m_scene->setProjectionMode(mode);
-        update();
-    }
-}
-
-ProjectSceneProjectionMode RobotViewport::projectionMode() const
-{
-    return m_scene != nullptr
-        ? m_scene->projectionMode()
-        : ProjectSceneProjectionMode::Perspective;
-}
-
 void RobotViewport::setInteractionMode(ProjectSceneInteractionMode mode)
 {
-    if(m_rotationCenterSelectionActive) {
-        cancelRotationCenterSelection();
-    }
     if(m_interactionMode == mode) {
         return;
     }
     m_interactionMode = mode;
-    if(mode != ProjectSceneInteractionMode::SelectRotationSurface) {
-        unsetCursor();
-    }
     if(m_scene != nullptr) {
         m_scene->setInteractionMode(mode);
         update();
     }
-}
-
-void RobotViewport::beginRotationSurfacePick()
-{
-    cancelRotationCenterSelection();
-    m_interactionMode = ProjectSceneInteractionMode::SelectRotationSurface;
-    if(m_scene != nullptr) {
-        m_scene->setInteractionMode(m_interactionMode);
-    }
-    setCursor(Qt::CrossCursor);
-    update();
 }
 
 ProjectSceneInteractionMode RobotViewport::interactionMode() const
@@ -1194,154 +1041,14 @@ bool RobotViewport::clearSurfaceScalarOverlay(const QString& objectId)
     return ok;
 }
 
-void RobotViewport::setCoatingTrajectoryPreview(
-    const std::vector<ProjectScene::CoatingTrajectoryPreviewPoint>& points,
-    bool visible)
-{
-    if(m_scene == nullptr) {
-        return;
-    }
-    m_scene->setCoatingTrajectoryPreview(points, visible);
-    m_sceneUpdatePending = true;
-    update();
-}
-
-bool RobotViewport::setCoatingTrajectoryPreviewVisible(bool visible)
-{
-    if(m_scene == nullptr) {
-        return false;
-    }
-    const bool cached = m_scene->setCoatingTrajectoryPreviewVisible(visible);
-    update();
-    return cached;
-}
-
-void RobotViewport::setCoatingPredictionDebugState(
-    const ProjectScene::CoatingPredictionDebugState& state)
-{
-    if(m_scene == nullptr) {
-        return;
-    }
-    m_scene->setCoatingPredictionDebugState(state);
-    m_sceneUpdatePending = true;
-    update();
-}
-
-void RobotViewport::setCoatingPredictionDebugVisibility(
-    const ProjectScene::CoatingPredictionDebugVisibility& visibility)
-{
-    if(m_scene == nullptr) {
-        return;
-    }
-    m_scene->setCoatingPredictionDebugVisibility(visibility);
-    m_sceneUpdatePending = true;
-    update();
-}
-
-void RobotViewport::clearCoatingPredictionDebugState()
-{
-    if(m_scene == nullptr) {
-        return;
-    }
-    const bool hasOpenGlContext = context() != nullptr && isValid();
-    if(hasOpenGlContext) {
-        makeCurrent();
-    }
-    m_scene->clearCoatingPredictionDebugState();
-    if(hasOpenGlContext) {
-        doneCurrent();
-    }
-    m_sceneUpdatePending = true;
-    update();
-}
-
-bool RobotViewport::setCoatingModelVisible(const QString& objectId, bool visible)
-{
-    if(m_scene == nullptr) {
-        return false;
-    }
-    const bool ok = m_scene->setCoatingModelVisible(objectId.toStdString(), visible);
-    if(ok) {
-        update();
-    }
-    return ok;
-}
-
-void RobotViewport::setCoatingModelVisibilities(
-    const std::unordered_map<std::string, bool>& visibility)
-{
-    if(m_scene == nullptr) {
-        return;
-    }
-    m_scene->setCoatingModelVisibilities(visibility);
-    update();
-}
-
-void RobotViewport::clearCoatingModelVisibility(const QString& objectId)
-{
-    if(m_scene == nullptr) {
-        return;
-    }
-    m_scene->clearCoatingModelVisibility(objectId.toStdString());
-    update();
-}
-
-void RobotViewport::setCoatingAnalysisView(bool active)
-{
-    m_coatingAnalysisViewActive = active;
-    if(m_scene == nullptr) {
-        return;
-    }
-    m_scene->setCoatingAnalysisView(active);
-    update();
-}
-
-void RobotViewport::setGpuPredictionBusy(bool busy)
-{
-    if(m_gpuPredictionBusy == busy) {
-        return;
-    }
-    m_gpuPredictionBusy = busy;
-    if(!busy) {
-        m_sceneUpdatePending = true;
-        update();
-    }
-}
-
 void RobotViewport::setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
 {
     m_surfaceScalarProbeEnabled = enabled;
     m_surfaceScalarProbeObjectId = enabled ? objectId : QString();
-    if(enabled && m_scene != nullptr) {
-        // Thickness picking uses the surface probe, not the scene-object hover outline.
-        m_scene->clearSceneObjectHover();
-        m_sceneUpdatePending = true;
-        update();
-    }
+    m_lastSurfaceScalarProbeTime = Clock::time_point();
     if(!enabled) {
-        emit surfaceScalarHovered(QString(), 0.0, 0.0, 0.0, 0.0, QPoint(), false);
+        emit surfaceScalarHovered(QString(), 0.0, QPoint(), false);
     }
-}
-
-void RobotViewport::updateSurfaceScalarProbe(const QPoint& position)
-{
-    if(!m_surfaceScalarProbeEnabled || m_surfaceScalarProbeObjectId.isEmpty() ||
-        m_scene == nullptr || m_gpuPredictionBusy) {
-        return;
-    }
-    const smrobot::visualization::SurfaceScalarProbeResult probe =
-        m_scene->probeSurfaceScalarAtScreenPoint(
-            m_surfaceScalarProbeObjectId.toStdString(),
-            position.x(),
-            position.y());
-    emit surfaceScalarHovered(
-        m_surfaceScalarProbeObjectId,
-        probe.value,
-        probe.worldPosition.x(),
-        probe.worldPosition.y(),
-        probe.worldPosition.z(),
-        position,
-        probe.hit);
 }
 
 bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
@@ -1367,9 +1074,6 @@ bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
         LOG_ERROR("rs2026") << "RobotViewport initializeSceneWithCurrentContext failed: unknown error";
     }
     if(ok) {
-        // Apply the coating view mode at scene-initialize time so robots are
-        // hidden before the first frame after a viewport reload (no flash).
-        m_scene->setCoatingAnalysisView(m_coatingAnalysisViewActive);
         publishRobotLinks();
     }
     if(releaseContext) {
@@ -1451,11 +1155,8 @@ void RobotViewport::paintGL()
 
     const auto now = Clock::now();
     const std::chrono::duration<double> elapsed = now - m_startTime;
-    if(!m_gpuPredictionBusy && (!m_surfaceScalarProbeEnabled || m_sceneUpdatePending)) {
-        m_scene->update(elapsed.count());
-        m_sceneUpdatePending = false;
-        emit robotStateUpdated();
-    }
+    m_scene->update(elapsed.count());
+    emit robotStateUpdated();
     m_scene->render();
 }
 
@@ -1463,118 +1164,50 @@ void RobotViewport::mousePressEvent(QMouseEvent* event)
 {
     m_lastMousePos = event->pos();
     m_mousePressPos = event->pos();
-    if(m_scene != nullptr && event->button() != Qt::NoButton) {
-        m_scene->clearSceneObjectHover();
-    }
-    if(m_rotationCenterSelectionActive &&
-        (event->button() == Qt::LeftButton || event->button() == Qt::RightButton)) {
-        if(event->button() == Qt::LeftButton) {
-            m_rotationCenterPressPos = event->pos();
-            m_rotationCenterDragActive = false;
-            if(m_rotationCenterRubberBand != nullptr) {
-                m_rotationCenterRubberBand->setGeometry(QRect(event->pos(), QSize()));
-                m_rotationCenterRubberBand->hide();
-            }
-        }
-        return;
-    }
-    if(m_surfaceScalarProbeEnabled) {
-        emit surfaceScalarHovered(
-            m_surfaceScalarProbeObjectId,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            event->pos(),
-            false);
-    }
 }
 
 void RobotViewport::mouseReleaseEvent(QMouseEvent* event)
 {
-    if(m_scene == nullptr) {
-        return;
-    }
-
-    if(event->button() == Qt::LeftButton) {
-        m_scene->setRotationCenterMarkerVisible(false);
-        update();
-    }
-
-    if(event->button() == Qt::RightButton) {
-        if(m_rotationCenterSelectionActive) {
-            cancelRotationCenterSelection();
-            return;
-        }
-        const QPoint delta = event->pos() - m_mousePressPos;
-        if(delta.manhattanLength() <= mouseDragThreshold()) {
-            showViewportContextMenu(event->pos());
-        }
-        return;
-    }
-
-    if(event->button() != Qt::LeftButton) {
-        return;
-    }
-
-    if(m_rotationCenterSelectionActive) {
-        const QRect selectionRect = QRect(m_rotationCenterPressPos, event->pos()).normalized();
-        if(m_rotationCenterRubberBand != nullptr) {
-            m_rotationCenterRubberBand->hide();
-        }
-        const bool changed = m_rotationCenterDragActive
-            ? completeRotationCenterSelection(selectionRect)
-            : completeRotationCenterSelection(event->pos());
-        m_rotationCenterDragActive = false;
-        if(changed) {
-            cancelRotationCenterSelection();
-        }
+    if(m_scene == nullptr || event->button() != Qt::LeftButton) {
         return;
     }
 
     const QPoint delta = event->pos() - m_mousePressPos;
-    if(delta.manhattanLength() > mouseDragThreshold()) {
+    if(delta.manhattanLength() > 3) {
         return;
-    }
-
-    if(m_interactionMode == ProjectSceneInteractionMode::SelectRotationSurface) {
-        const ProjectSceneTrianglePickResult result =
-            m_scene->pickTriangleScreenPoint(event->pos().x(), event->pos().y());
-        if(result.valid()) {
-            emit rotationSurfacePicked(
-                toQString(result.sceneObjectId),
-                result.triangleIndex,
-                result.hitPosition.x(),
-                result.hitPosition.y(),
-                result.hitPosition.z(),
-                result.normal.x(),
-                result.normal.y(),
-                result.normal.z());
-            setInteractionMode(ProjectSceneInteractionMode::Browse);
-        }
-        return;
-    }
-
-    if(m_surfaceScalarProbeEnabled && !m_surfaceScalarProbeObjectId.isEmpty()) {
-        updateSurfaceScalarProbe(event->pos());
     }
 
     const ProjectScenePickResult result = m_scene->pickScreenPoint(event->pos().x(), event->pos().y());
     if(!result.valid()) {
-        if(m_coatingAnalysisViewActive) {
-            m_scene->setSelectedSceneObject(std::string());
-            m_sceneUpdatePending = true;
-        }
-        emit sceneSelectionCleared();
-        update();
         return;
     }
 
-    if(m_coatingAnalysisViewActive && !result.sceneObjectId.empty()) {
-        // Keep coating viewport selection responsive instead of waiting for
-        // the workbench selection event to make a second render pass.
-        m_scene->setSelectedSceneObject(result.sceneObjectId);
-        m_sceneUpdatePending = true;
+    switch(result.kind) {
+    case ProjectScenePickTargetKind::Robot:
+        selectRobotLink(toQString(result.robotId), QString());
+        break;
+    case ProjectScenePickTargetKind::RobotLink:
+        selectRobotLink(toQString(result.robotId), toQString(result.linkName));
+        break;
+    case ProjectScenePickTargetKind::RobotMount:
+        selectRobotMount(
+            toQString(result.robotId),
+            toQString(result.linkName),
+            toQString(result.robotMountId));
+        setActivePreviewRobotMount(toQString(result.robotMountId));
+        break;
+    case ProjectScenePickTargetKind::MountedAttachment:
+        selectMountedAttachment(toQString(result.mountedAttachmentId));
+        setActiveMountedAttachment(toQString(result.mountedAttachmentId));
+        break;
+    case ProjectScenePickTargetKind::SceneObject:
+        selectSceneObject(toQString(result.sceneObjectId));
+        break;
+    case ProjectScenePickTargetKind::PointCloud:
+        selectSceneObject(toQString(result.sceneObjectId));
+        break;
+    case ProjectScenePickTargetKind::None:
+        return;
     }
 
     emit scenePicked(
@@ -1587,23 +1220,23 @@ void RobotViewport::mouseReleaseEvent(QMouseEvent* event)
     update();
 }
 
-void RobotViewport::mouseMoveEvent(QMouseEvent* event)
+void RobotViewport::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if(m_rotationCenterSelectionActive) {
-        if(event->buttons() & Qt::LeftButton) {
-            const QPoint delta = event->pos() - m_rotationCenterPressPos;
-            if(delta.manhattanLength() > mouseDragThreshold()) {
-                m_rotationCenterDragActive = true;
-                if(m_rotationCenterRubberBand != nullptr) {
-                    m_rotationCenterRubberBand->setGeometry(
-                        QRect(m_rotationCenterPressPos, event->pos()).normalized());
-                    m_rotationCenterRubberBand->show();
-                }
-            }
+    if(m_scene != nullptr && event->button() == Qt::LeftButton) {
+        const ProjectScenePickResult result =
+            m_scene->pickScreenPoint(event->pos().x(), event->pos().y());
+        if(!result.valid()) {
+            emit backgroundDoubleClicked();
+            event->accept();
+            return;
         }
-        return;
     }
 
+    QOpenGLWidget::mouseDoubleClickEvent(event);
+}
+
+void RobotViewport::mouseMoveEvent(QMouseEvent* event)
+{
     if(m_scene == nullptr || m_lastMousePos.isNull()) {
         m_lastMousePos = event->pos();
         return;
@@ -1617,30 +1250,33 @@ void RobotViewport::mouseMoveEvent(QMouseEvent* event)
         button = 1;
     }
 
-    if(button == 0) {
-        m_scene->clearSceneObjectHover();
-        m_scene->onMouseMove(
-            static_cast<float>(delta.x()) * 0.8f,
+    if(button >= 0) {
+        if(m_surfaceScalarProbeEnabled) {
+            emit surfaceScalarHovered(
+                m_surfaceScalarProbeObjectId,
+                0.0,
+                event->pos(),
+                false);
+        }
+        m_scene->onMouseMove(static_cast<float>(delta.x()) * 0.8f,
             static_cast<float>(-delta.y()) * 0.8f,
             button);
         update();
-    } else if(button == 1) {
-        m_scene->clearSceneObjectHover();
-        m_scene->onMouseMove(
-            static_cast<float>(delta.x()),
-            static_cast<float>(delta.y()),
-            button);
-        update();
-    } else if((m_interactionMode == ProjectSceneInteractionMode::Browse ||
-        (m_coatingAnalysisViewActive &&
-            m_interactionMode != ProjectSceneInteractionMode::SelectRotationSurface)) &&
-        !m_gpuPredictionBusy && !m_surfaceScalarProbeEnabled) {
-        m_scene->requestSceneObjectHover(event->pos().x(), event->pos().y());
-        update();
-    }
-
-    if(button < 0) {
-        updateSurfaceScalarProbe(event->pos());
+    } else if(m_surfaceScalarProbeEnabled && !m_surfaceScalarProbeObjectId.isEmpty()) {
+        const Clock::time_point now = Clock::now();
+        if(now - m_lastSurfaceScalarProbeTime >= std::chrono::milliseconds(33)) {
+            m_lastSurfaceScalarProbeTime = now;
+            const smrobot::visualization::SurfaceScalarProbeResult result =
+                m_scene->probeSurfaceScalarAtScreenPoint(
+                    m_surfaceScalarProbeObjectId.toStdString(),
+                    event->pos().x(),
+                    event->pos().y());
+            emit surfaceScalarHovered(
+                m_surfaceScalarProbeObjectId,
+                result.value,
+                event->pos(),
+                result.hit);
+        }
     }
 
     m_lastMousePos = event->pos();
@@ -1648,18 +1284,9 @@ void RobotViewport::mouseMoveEvent(QMouseEvent* event)
 
 void RobotViewport::leaveEvent(QEvent* event)
 {
-    if(m_scene != nullptr) {
-        m_scene->clearSceneObjectHover();
-        m_scene->setRotationCenterMarkerVisible(false);
-        m_sceneUpdatePending = true;
-        update();
-    }
     if(m_surfaceScalarProbeEnabled) {
         emit surfaceScalarHovered(
             m_surfaceScalarProbeObjectId,
-            0.0,
-            0.0,
-            0.0,
             0.0,
             QPoint(),
             false);
@@ -1673,21 +1300,13 @@ void RobotViewport::wheelEvent(QWheelEvent* event)
         return;
     }
 
-    m_scene->clearSceneObjectHover();
     const float delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
-    m_scene->onScroll(delta * 0.8f, event->pos().x(), event->pos().y());
+    m_scene->onScroll(delta * 0.8f);
     update();
 }
 
 void RobotViewport::keyPressEvent(QKeyEvent* event)
 {
-    if(m_rotationCenterSelectionActive &&
-        event->key() == Qt::Key_Escape &&
-        !event->isAutoRepeat()) {
-        cancelRotationCenterSelection();
-        return;
-    }
-
     if(m_scene == nullptr) {
         QOpenGLWidget::keyPressEvent(event);
         return;

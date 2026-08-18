@@ -7,14 +7,12 @@
 #include "RobotCollisionModelInspector.h"
 #include "RobotCollisionOverrideApplier.h"
 #include "RobotCollisionProxyGenerator.h"
-#include "SceneObjectHoverPass.h"
 
 #include <glad/glad.h>
 
 #include <AssetCore/AssetManager.h>
-#include <AssetCore/ModelDesc.h>
-#include <AssetCore/SubMeshDesc.h>
 #include <Collision/CollisionDebugDrawBuilder.h>
+#include <CameraCore/CameraFactory.h>
 #include <Collision/CollisionGeometryBuilder.h>
 #include <Collision/CollisionScene.h>
 #include <Collision/RobotCollisionInstance.h>
@@ -22,12 +20,9 @@
 #include <CustomLog/CustomLog.h>
 #include <GLRuntime/GLRuntime.h>
 #include <RenderCore/Material.h>
-#include <RenderCore/Geometry.h>
-#include <RenderCore/MathUtils.h>
 #include <RenderCore/Model.h>
 #include <RenderCore/ModelManager.h>
 #include <RenderCore/ShaderLibrary.h>
-#include <RenderCore/SubMesh.h>
 #include <RobotCore/RobotModel.h>
 #include <RobotInstance/RobotInstance.h>
 #include <RobotRenderBridge/CollisionRenderBridge.h>
@@ -56,16 +51,21 @@
 #include <Utility/MathConvert.hpp>
 #include <data_path.h>
 
+#include <Eigen/Geometry>
+
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -74,7 +74,6 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 using namespace collision;
@@ -89,10 +88,6 @@ namespace
     constexpr float kCollisionPreviewVisibleAlpha = 0.34f;
     constexpr float kCollisionPreviewBlend = 0.34f;
     constexpr float kCollisionPreviewVisualDarken = 0.74f;
-    constexpr float kCameraVerticalFovDegrees = 45.0f;
-    constexpr float kCameraMinimumDistance = 1.0e-5f;
-    constexpr float kCameraMaximumDistance = 1.0e6f;
-    constexpr float kCameraZoomSpeed = 0.35f;
 
     Eigen::Vector3f gammaToLinear(const Eigen::Vector3f& color)
     {
@@ -462,198 +457,12 @@ namespace
         return result;
     }
 
-    class ViewerCamera final : public cameracore::ICamera
+    std::shared_ptr<scenecore::CameraNode> createMainCamera(scenecore::SceneGraph& graph)
     {
-    public:
-        Eigen::Matrix4f view() const override
-        {
-            return rendercore::lookAt(m_position, m_target, m_up);
-        }
+        auto camera = cameracore::CameraFactory::createOrbitCamera();
+        camera->setUpAxis(cameracore::UpAxis::Z_UP);
 
-        Eigen::Matrix4f projection() const override
-        {
-            const float distance = std::clamp(
-                (m_position - m_target).norm(),
-                kCameraMinimumDistance,
-                kCameraMaximumDistance);
-
-            if(m_mode == ProjectSceneProjectionMode::Perspective) {
-                const float nearPlane = std::max(1.0e-7f, distance * 1.0e-2f);
-                const float farPlane = distance * 1000.0f;
-                return rendercore::perspective(
-                    kCameraVerticalFovDegrees,
-                    m_aspect,
-                    nearPlane,
-                    farPlane);
-            }
-
-            const float nearPlane = std::max(1.0e-6f, distance * 1.0e-4f);
-            const float farPlane = std::max(100.0f, distance * 1000.0f);
-            const float halfHeight = distance * std::tan(
-                kCameraVerticalFovDegrees * static_cast<float>(kPi) / 360.0f);
-            const float halfWidth = halfHeight * m_aspect;
-            Eigen::Matrix4f result = Eigen::Matrix4f::Identity();
-            result(0, 0) = 1.0f / halfWidth;
-            result(1, 1) = 1.0f / halfHeight;
-            // The bundled infinite-grid shader reconstructs rays from NDC
-            // depths 0 and 1. Keep the orthographic depth range compatible
-            // with that shader while preserving the normal x/y projection.
-            result(2, 2) = -1.0f / (farPlane - nearPlane);
-            result(2, 3) = -nearPlane / (farPlane - nearPlane);
-            return result;
-        }
-
-        Eigen::Vector3f position() const override
-        {
-            return m_position;
-        }
-
-        void setAspect(float aspect) override
-        {
-            m_aspect = std::max(0.01f, aspect);
-        }
-
-        void setUpAxis(cameracore::UpAxis axis) override
-        {
-            m_worldUp = axis == cameracore::UpAxis::Z_UP
-                ? Eigen::Vector3f::UnitZ()
-                : Eigen::Vector3f::UnitY();
-        }
-
-        void lookAt(
-            const Eigen::Vector3f& position,
-            const Eigen::Vector3f& target,
-            const Eigen::Vector3f& up) override
-        {
-            if((position - target).squaredNorm() <= 1.0e-12f || up.squaredNorm() <= 1.0e-12f) {
-                return;
-            }
-            m_position = position;
-            m_target = target;
-            m_up = up.normalized();
-        }
-
-        void orbit(float dx, float dy)
-        {
-            const Eigen::Vector3f pivot = m_hasOrbitCenter ? m_orbitCenter : m_target;
-            Eigen::Vector3f positionOffset = m_position - pivot;
-            Eigen::Vector3f targetOffset = m_target - pivot;
-            if(positionOffset.squaredNorm() <= 1.0e-12f) {
-                return;
-            }
-
-            const Eigen::AngleAxisf yaw(-dx * 0.005f, m_worldUp);
-            positionOffset = yaw * positionOffset;
-            targetOffset = yaw * targetOffset;
-            Eigen::Vector3f nextUp = (yaw * m_up).normalized();
-
-            const Eigen::Vector3f forward = (targetOffset - positionOffset).normalized();
-            const Eigen::Vector3f right = forward.cross(nextUp).normalized();
-            const Eigen::AngleAxisf pitch(dy * 0.005f, right);
-            const Eigen::Vector3f candidatePositionOffset = pitch * positionOffset;
-            const Eigen::Vector3f candidateTargetOffset = pitch * targetOffset;
-            const Eigen::Vector3f candidateUp = (pitch * nextUp).normalized();
-            const Eigen::Vector3f candidateForward =
-                (candidateTargetOffset - candidatePositionOffset).normalized();
-            if(std::abs(candidateForward.dot(candidateUp)) < 0.999f) {
-                positionOffset = candidatePositionOffset;
-                targetOffset = candidateTargetOffset;
-                nextUp = candidateUp;
-            }
-            m_position = pivot + positionOffset;
-            m_target = pivot + targetOffset;
-            m_up = nextUp;
-        }
-
-        void pan(float dx, float dy, int viewportHeight)
-        {
-            if(viewportHeight <= 0) {
-                return;
-            }
-            const float distance = (m_position - m_target).norm();
-            const float halfHeight = distance * std::tan(
-                kCameraVerticalFovDegrees * static_cast<float>(kPi) / 360.0f);
-            const float worldUnitsPerPixel = (2.0f * halfHeight) /
-                static_cast<float>(viewportHeight);
-            const Eigen::Matrix4f currentView = view();
-            const Eigen::Vector3f right = currentView.block<1, 3>(0, 0).transpose();
-            const Eigen::Vector3f cameraUp = currentView.block<1, 3>(1, 0).transpose();
-            const Eigen::Vector3f translation =
-                (-right * dx + cameraUp * dy) * worldUnitsPerPixel;
-            m_position += translation;
-            m_target += translation;
-        }
-
-        void zoomAt(float delta, const Eigen::Vector3f& anchor)
-        {
-            const float currentDistance = (m_position - m_target).norm();
-            if(currentDistance <= std::numeric_limits<float>::epsilon()) {
-                return;
-            }
-            const float nextDistance = std::clamp(
-                currentDistance * std::exp(-delta * kCameraZoomSpeed),
-                kCameraMinimumDistance,
-                kCameraMaximumDistance);
-            const float scale = nextDistance / currentDistance;
-            m_position = anchor + (m_position - anchor) * scale;
-            m_target = anchor + (m_target - anchor) * scale;
-        }
-
-        void setProjectionMode(ProjectSceneProjectionMode mode)
-        {
-            m_mode = mode;
-        }
-
-        ProjectSceneProjectionMode projectionMode() const
-        {
-            return m_mode;
-        }
-
-        const Eigen::Vector3f& target() const
-        {
-            return m_target;
-        }
-
-        const Eigen::Vector3f& up() const
-        {
-            return m_up;
-        }
-
-        void setOrbitCenter(const Eigen::Vector3f& center)
-        {
-            m_orbitCenter = center;
-            m_hasOrbitCenter = true;
-        }
-
-        void clearOrbitCenter()
-        {
-            m_hasOrbitCenter = false;
-        }
-
-        bool hasOrbitCenter() const
-        {
-            return m_hasOrbitCenter;
-        }
-
-    private:
-        Eigen::Vector3f m_position = Eigen::Vector3f(0.0f, -5.0f, 3.0f);
-        Eigen::Vector3f m_target = Eigen::Vector3f::Zero();
-        Eigen::Vector3f m_up = Eigen::Vector3f::UnitZ();
-        Eigen::Vector3f m_worldUp = Eigen::Vector3f::UnitZ();
-        Eigen::Vector3f m_orbitCenter = Eigen::Vector3f::Zero();
-        float m_aspect = 1.0f;
-        ProjectSceneProjectionMode m_mode = ProjectSceneProjectionMode::Perspective;
-        bool m_hasOrbitCenter = false;
-    };
-
-    std::shared_ptr<scenecore::CameraNode> createMainCamera(
-        scenecore::SceneGraph& graph,
-        std::shared_ptr<ViewerCamera>& viewerCamera)
-    {
-        viewerCamera = std::make_shared<ViewerCamera>();
-        viewerCamera->setUpAxis(cameracore::UpAxis::Z_UP);
-
-        auto node = std::make_shared<scenecore::CameraNode>(viewerCamera, "mainCameraNode");
+        auto node = std::make_shared<scenecore::CameraNode>(camera, "mainCameraNode");
         graph.addNode(node);
         graph.registerNode(node);
         return node;
@@ -709,12 +518,12 @@ namespace
             return (min + max) * 0.5;
         }
 
-        double radius(double minimumRadius = 0.5) const
+        double radius() const
         {
             if(!valid) {
                 return 2.0;
             }
-            return std::max(minimumRadius, (max - min).norm() * 0.5);
+            return std::max(0.5, (max - min).norm() * 0.5);
         }
     };
 
@@ -763,17 +572,13 @@ namespace
     CameraLookAtState makeCameraLookAtState(
         const CameraSceneBounds& bounds,
         ProjectSceneCameraView view,
-        double distanceScale,
-        double minimumRadius = 0.5,
-        double minimumDistance = 2.5)
+        double distanceScale)
     {
         const Vec3 center = bounds.center();
-        const double radius = bounds.radius(minimumRadius);
+        const double radius = bounds.radius();
         constexpr double kVerticalFovDegrees = 45.0;
         const double fovRadians = kVerticalFovDegrees * kPi / 180.0;
-        const double distance = std::max(
-            minimumDistance,
-            radius / std::sin(fovRadians * 0.5) * distanceScale);
+        const double distance = std::max(2.5, radius / std::sin(fovRadians * 0.5) * distanceScale);
 
         CameraLookAtState state;
         state.target = Eigen::Vector3f(
@@ -782,50 +587,6 @@ namespace
             static_cast<float>(center.z()));
         state.position = state.target + cameraDirection(view) * static_cast<float>(distance);
         state.up = cameraUp(view);
-        state.valid = true;
-        return state;
-    }
-
-    CameraLookAtState makeCameraLookAtStateForCurrentCamera(
-        const CameraSceneBounds& bounds,
-        const std::shared_ptr<ViewerCamera>& viewerCamera,
-        double distanceScale)
-    {
-        CameraLookAtState state;
-        if(!bounds.valid || !viewerCamera) {
-            return state;
-        }
-
-        const Vec3 center = bounds.center();
-        const double radius = std::max(
-            static_cast<double>(kCameraMinimumDistance) * 10.0,
-            (bounds.max - bounds.min).norm() * 0.5);
-        constexpr double kVerticalFovDegrees = 45.0;
-        const double fovRadians = kVerticalFovDegrees * kPi / 180.0;
-        const double distance = std::max(
-            static_cast<double>(kCameraMinimumDistance) * 10.0,
-            radius / std::sin(fovRadians * 0.5) * distanceScale);
-
-        Eigen::Vector3f direction = viewerCamera->position() - viewerCamera->target();
-        if(direction.squaredNorm() <= 1.0e-12f) {
-            direction = cameraDirection(ProjectSceneCameraView::Isometric);
-        } else {
-            direction.normalize();
-        }
-
-        Eigen::Vector3f up = viewerCamera->up();
-        if(up.squaredNorm() <= 1.0e-12f || std::abs(direction.dot(up.normalized())) > 0.999f) {
-            up = cameraUp(ProjectSceneCameraView::Isometric);
-        } else {
-            up.normalize();
-        }
-
-        state.target = Eigen::Vector3f(
-            static_cast<float>(center.x()),
-            static_cast<float>(center.y()),
-            static_cast<float>(center.z()));
-        state.position = state.target + direction * static_cast<float>(distance);
-        state.up = up;
         state.valid = true;
         return state;
     }
@@ -1236,6 +997,17 @@ namespace
         return geometry;
     }
 
+    bool shouldUseVisualCollisionFallback(
+        const std::string& activeModelId,
+        const robot::RobotLink& link,
+        bool explicitlySelectedLink)
+    {
+        return explicitlySelectedLink &&
+            activeModelId.empty() &&
+            link.collisions.empty() &&
+            !link.visuals.empty();
+    }
+
     std::string makeRobotCollisionModelCacheKey(
         const simulation_project::ProjectDocument& document,
         const std::string& robotId,
@@ -1272,7 +1044,13 @@ namespace
             const std::string activeModelId =
                 activeRobotLinkCollisionModelId(document, robotId, linkName);
             stream << "|active=" << activeModelId;
-            if(simulation_project::isConvertFromVisualCollisionModelId(activeModelId)) {
+            const bool useVisualCollision =
+                simulation_project::isConvertFromVisualCollisionModelId(activeModelId) ||
+                shouldUseVisualCollisionFallback(
+                    activeModelId,
+                    linkIt->second,
+                    linkSelection != nullptr && !linkSelection->allLinks);
+            if(useVisualCollision) {
                 for(const robot::RobotVisual& visual : linkIt->second.visuals) {
                     stream << "|v=" << visual.partUid
                         << "," << visual.meshPath
@@ -1555,9 +1333,13 @@ namespace
             std::vector<robot::RobotCollisionGeometry> visualCollisionGeometries;
             const std::string activeModelId =
                 activeRobotLinkCollisionModelId(document, runtime.documentId, linkName);
-            const bool convertFromVisual =
-                simulation_project::isConvertFromVisualCollisionModelId(activeModelId);
-            if(convertFromVisual) {
+            const bool useVisualCollision =
+                simulation_project::isConvertFromVisualCollisionModelId(activeModelId) ||
+                shouldUseVisualCollisionFallback(
+                    activeModelId,
+                    linkIt->second,
+                    linkSelection != nullptr && !linkSelection->allLinks);
+            if(useVisualCollision) {
                 visualCollisionGeometries.reserve(linkIt->second.visuals.size());
                 for(std::size_t visualIndex = 0; visualIndex < linkIt->second.visuals.size(); ++visualIndex) {
                     const robot::RobotVisual& visual = linkIt->second.visuals[visualIndex];
@@ -1569,10 +1351,10 @@ namespace
             }
 
             const std::vector<robot::RobotCollisionGeometry>& sourceGeometries =
-                convertFromVisual ? visualCollisionGeometries : linkIt->second.collisions;
+                useVisualCollision ? visualCollisionGeometries : linkIt->second.collisions;
 
             for(const auto& geometry : sourceGeometries) {
-                if(!convertFromVisual &&
+                if(!useVisualCollision &&
                     !simulation_project::robotLinkCollisionElementMatchesModelId(
                         activeModelId,
                         runtime.documentId,
@@ -1975,20 +1757,16 @@ namespace
         }
     }
 
-    void setSceneObjectHighlightState(
-        RuntimeSceneObject& object,
-        SceneObjectHighlightState state)
+    void setSceneObjectHighlighted(RuntimeSceneObject& object, bool highlighted)
     {
-        if(object.highlightState == state) {
+        if(object.highlighted == highlighted) {
             return;
         }
 
         if(object.visualModel) {
             for(unsigned int i = 0; i < object.visualModel->subMeshCount(); ++i) {
                 auto& subMesh = object.visualModel->subMesh(i);
-                if(state == SceneObjectHighlightState::Colliding) {
-                    subMesh.material = object.collisionHighlightMaterial;
-                } else if(state == SceneObjectHighlightState::Selected) {
+                if(highlighted) {
                     subMesh.material = object.highlightMaterial;
                 } else if(i < object.originalMaterials.size()) {
                     subMesh.material = object.originalMaterials[i];
@@ -1996,12 +1774,12 @@ namespace
             }
         }
         if(object.pointCloudNode) {
-            const float pointSize = state != SceneObjectHighlightState::None
+            const float pointSize = highlighted
                 ? std::max(object.pointCloudBasePointSize * 1.8f, object.pointCloudBasePointSize + 2.0f)
                 : object.pointCloudBasePointSize;
             object.pointCloudNode->setPointSize(pointSize);
         }
-        object.highlightState = state;
+        object.highlighted = highlighted;
     }
 
     void updateSceneObjectHighlights(
@@ -2010,21 +1788,16 @@ namespace
         const std::string& selectedObject)
     {
         for(RuntimeSceneObject& object : objects) {
-            bool colliding = false;
+            bool highlighted = object.documentId == selectedObject;
             if(object.collisionObject) {
-                colliding = collidingObjects.count(object.collisionObject->id()) > 0;
+                highlighted = highlighted || collidingObjects.count(object.collisionObject->id()) > 0;
             }
             for(const RuntimeSceneCollisionObject& collisionObject : object.collisionObjects) {
-                colliding = colliding ||
+                highlighted = highlighted ||
                     (collisionObject.collisionObject &&
                         collidingObjects.count(collisionObject.collisionObject->id()) > 0);
             }
-            const SceneObjectHighlightState state = colliding
-                ? SceneObjectHighlightState::Colliding
-                : (object.documentId == selectedObject
-                    ? SceneObjectHighlightState::Selected
-                    : SceneObjectHighlightState::None);
-            setSceneObjectHighlightState(object, state);
+            setSceneObjectHighlighted(object, highlighted);
         }
     }
 
@@ -2063,6 +1836,911 @@ namespace
                 jointTypeName(joint.type) });
         }
         return joints;
+    }
+
+    std::vector<ProjectScene::RobotJointInfo> parallelControlJointInfos()
+    {
+        return {
+            { "parallel.pose.x", "prismatic" },
+            { "parallel.pose.y", "prismatic" },
+            { "parallel.pose.z", "prismatic" },
+            { "parallel.pose.roll", "revolute" },
+            { "parallel.pose.pitch", "revolute" },
+            { "parallel.pose.yaw", "revolute" },
+            { "parallel.actuator.1", "prismatic" },
+            { "parallel.actuator.2", "prismatic" },
+            { "parallel.actuator.3", "prismatic" },
+            { "parallel.actuator.4", "prismatic" },
+            { "parallel.actuator.5", "prismatic" },
+            { "parallel.actuator.6", "prismatic" }
+        };
+    }
+
+    std::vector<std::string> parallelControlJointNames()
+    {
+        std::vector<std::string> names;
+        const std::vector<ProjectScene::RobotJointInfo> controls =
+            parallelControlJointInfos();
+        names.reserve(controls.size());
+        for(const ProjectScene::RobotJointInfo& control : controls) {
+            names.push_back(control.jointName);
+        }
+        return names;
+    }
+
+    std::string lowerCopy(std::string value)
+    {
+        std::transform(
+            value.begin(),
+            value.end(),
+            value.begin(),
+            [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+        return value;
+    }
+
+    bool isStewartSimscapeRobotDesc(const simulation_project::RobotDesc& robotDesc)
+    {
+        const std::string sourceType = lowerCopy(robotDesc.sourceType);
+        const std::string sourcePath = lowerCopy(robotDesc.sourcePath);
+        return sourceType.find("simscape") != std::string::npos &&
+            sourcePath.find("stewart") != std::string::npos;
+    }
+
+    const std::string& stewartUpperActuatorMarker()
+    {
+        static const std::string marker =
+            "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8A\xE6\xAE\xB5";
+        return marker;
+    }
+
+    const std::string& stewartLowerActuatorMarker()
+    {
+        static const std::string marker =
+            "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8B\xE6\xAE\xB5";
+        return marker;
+    }
+
+    const std::string& stewartHookeMarker()
+    {
+        static const std::string marker =
+            "\xE8\x99\x8E\xE5\x85\x8B\xE9\x93\xB0";
+        return marker;
+    }
+
+    const std::string& stewartTopPlatformMarker()
+    {
+        static const std::string marker =
+            "\xE4\xB8\x8A\xE5\x8A\xA8\xE5\xB9\xB3\xE5\x8F\xB0";
+        return marker;
+    }
+
+    const std::string& stewartPayloadMarker()
+    {
+        static const std::string marker =
+            "\xE5\xB7\xA5\xE4\xBB\xB6";
+        return marker;
+    }
+
+    int legIndexAfterMarker(const std::string& linkName, const std::string& marker)
+    {
+        const std::size_t markerPos = linkName.find(marker);
+        if(markerPos == std::string::npos) {
+            return -1;
+        }
+
+        for(std::size_t index = markerPos + marker.size(); index < linkName.size(); ++index) {
+            const char ch = linkName[index];
+            if(ch >= '1' && ch <= '6') {
+                return ch - '1';
+            }
+        }
+        return -1;
+    }
+
+    int actuatorLegIndexFromLinkName(const std::string& linkName)
+    {
+        return legIndexAfterMarker(linkName, stewartUpperActuatorMarker());
+    }
+
+    bool robotModelHasLinkContaining(const robot::RobotModel& model, const std::string& marker)
+    {
+        return std::any_of(
+            model.linkNames.begin(),
+            model.linkNames.end(),
+            [&](const std::string& linkName) {
+                return linkName.find(marker) != std::string::npos;
+            });
+    }
+
+    bool isStewartSimscapePlatformModel(
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        if(!isStewartSimscapeRobotDesc(robotDesc)) {
+            return false;
+        }
+
+        std::array<bool, 6> upperLinksFound{};
+        for(const std::string& linkName : model.linkNames) {
+            const int legIndex = actuatorLegIndexFromLinkName(linkName);
+            if(legIndex >= 0 && legIndex < 6) {
+                upperLinksFound[static_cast<std::size_t>(legIndex)] = true;
+            }
+        }
+
+        return robotModelHasLinkContaining(
+                   model,
+                   "\xE4\xB8\x8B\xE5\xAE\x9A\xE5\xB9\xB3\xE5\x8F\xB0") &&
+            std::all_of(
+                upperLinksFound.begin(),
+                upperLinksFound.end(),
+                [](bool found) { return found; });
+    }
+
+    bool isStewartSimscapeFollowerFragment(
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        return isStewartSimscapeRobotDesc(robotDesc) &&
+            !isStewartSimscapePlatformModel(robotDesc, model) &&
+            robotModelHasLinkContaining(model, stewartUpperActuatorMarker());
+    }
+
+    bool sameStewartSource(const RuntimeRobot& a, const RuntimeRobot& b)
+    {
+        return lowerCopy(a.sourceType) == lowerCopy(b.sourceType) &&
+            lowerCopy(a.sourcePath) == lowerCopy(b.sourcePath) &&
+            lowerCopy(a.sourceType).find("simscape") != std::string::npos &&
+            lowerCopy(a.sourcePath).find("stewart") != std::string::npos;
+    }
+
+    int stewartLegIndexFromLinkName(const std::string& linkName)
+    {
+        const int upperIndex = legIndexAfterMarker(linkName, stewartUpperActuatorMarker());
+        if(upperIndex >= 0) {
+            return upperIndex;
+        }
+
+        const int lowerIndex = legIndexAfterMarker(linkName, stewartLowerActuatorMarker());
+        if(lowerIndex >= 0) {
+            return lowerIndex;
+        }
+
+        return legIndexAfterMarker(linkName, stewartHookeMarker());
+    }
+
+    std::string findFirstLinkContaining(const robot::RobotModel& model, const std::string& token)
+    {
+        for(const std::string& linkName : model.linkNames) {
+            if(linkName.find(token) != std::string::npos) {
+                return linkName;
+            }
+        }
+        return std::string();
+    }
+
+    std::string findFirstLinkForLeg(
+        const robot::RobotModel& model,
+        const std::string& marker,
+        int legIndex)
+    {
+        for(const std::string& linkName : model.linkNames) {
+            if(legIndexAfterMarker(linkName, marker) == legIndex) {
+                return linkName;
+            }
+        }
+        return std::string();
+    }
+
+    bool linkExists(const robot::RobotModel& model, const std::string& linkName)
+    {
+        return !linkName.empty() && model.links.find(linkName) != model.links.end();
+    }
+
+    bool isStewartInternalPlatformDrivenLink(const std::string& linkName)
+    {
+        return linkName.find(stewartTopPlatformMarker()) != std::string::npos ||
+            linkName.find(stewartPayloadMarker()) != std::string::npos;
+    }
+
+    bool jointTouchesLegMarker(
+        const robot::RobotJoint& joint,
+        const std::string& marker,
+        int legIndex)
+    {
+        return legIndexAfterMarker(joint.parent, marker) == legIndex ||
+            legIndexAfterMarker(joint.child, marker) == legIndex;
+    }
+
+    bool jointAnchorWorld(
+        const RuntimeRobot& runtime,
+        const robot::RobotJoint& joint,
+        collision::Vec3& anchor)
+    {
+        if(!runtime.instance || !linkExists(runtime.model, joint.parent)) {
+            return false;
+        }
+
+        const collision::Transform3 worldParent =
+            runtime.instance->getLinkTransform(joint.parent);
+        anchor = (worldParent * joint.T_parent_joint).translation();
+        return true;
+    }
+
+    void collectJointAnchorsForLeg(
+        const RuntimeRobot& runtime,
+        const std::string& marker,
+        int legIndex,
+        std::vector<collision::Vec3>& anchors)
+    {
+        for(const robot::RobotJoint& joint : runtime.model.joints) {
+            if(!jointTouchesLegMarker(joint, marker, legIndex)) {
+                continue;
+            }
+
+            collision::Vec3 anchor = collision::Vec3::Zero();
+            if(jointAnchorWorld(runtime, joint, anchor)) {
+                anchors.push_back(anchor);
+            }
+        }
+    }
+
+    void collectLinkOriginAnchorForLeg(
+        const RuntimeRobot& runtime,
+        const std::string& marker,
+        int legIndex,
+        std::vector<collision::Vec3>& anchors)
+    {
+        const std::string link = findFirstLinkForLeg(runtime.model, marker, legIndex);
+        if(!link.empty() && runtime.instance) {
+            anchors.push_back(runtime.instance->getLinkTransform(link).translation());
+        }
+    }
+
+    bool chooseLowestLocalZAnchor(
+        const std::vector<collision::Vec3>& anchors,
+        const collision::Transform3& referenceInverse,
+        collision::Vec3& anchor)
+    {
+        if(anchors.empty()) {
+            return false;
+        }
+
+        auto bestIt = anchors.begin();
+        double bestZ = (referenceInverse * *bestIt).z();
+        for(auto it = std::next(anchors.begin()); it != anchors.end(); ++it) {
+            const double z = (referenceInverse * *it).z();
+            if(z < bestZ) {
+                bestZ = z;
+                bestIt = it;
+            }
+        }
+
+        anchor = *bestIt;
+        return true;
+    }
+
+    bool chooseFarthestAnchor(
+        const std::vector<collision::Vec3>& anchors,
+        const collision::Vec3& reference,
+        collision::Vec3& anchor)
+    {
+        if(anchors.empty()) {
+            return false;
+        }
+
+        auto bestIt = anchors.begin();
+        double bestDistance = (*bestIt - reference).squaredNorm();
+        for(auto it = std::next(anchors.begin()); it != anchors.end(); ++it) {
+            const double distance = (*it - reference).squaredNorm();
+            if(distance > bestDistance) {
+                bestDistance = distance;
+                bestIt = it;
+            }
+        }
+
+        anchor = *bestIt;
+        return true;
+    }
+
+    int findStewartFollowerActuatorDofIndex(const RuntimeRobot& follower, int legIndex)
+    {
+        for(const robot::RobotJoint& joint : follower.model.joints) {
+            if(joint.type != robot::JointType::Prismatic || joint.dofIndex < 0) {
+                continue;
+            }
+
+            if(jointTouchesLegMarker(joint, stewartLowerActuatorMarker(), legIndex) &&
+                jointTouchesLegMarker(joint, stewartUpperActuatorMarker(), legIndex)) {
+                return joint.dofIndex;
+            }
+        }
+
+        for(const robot::RobotJoint& joint : follower.model.joints) {
+            if(joint.type != robot::JointType::Prismatic || joint.dofIndex < 0) {
+                continue;
+            }
+
+            if(stewartLegIndexFromLinkName(joint.parent) == legIndex ||
+                stewartLegIndexFromLinkName(joint.child) == legIndex) {
+                return joint.dofIndex;
+            }
+        }
+        return -1;
+    }
+
+    std::array<int, 2> findStewartBaseRevoluteDofIndices(
+        const RuntimeRobot& platform,
+        int legIndex,
+        const std::string& lowerLink)
+    {
+        std::array<int, 2> result{ { -1, -1 } };
+        std::unordered_map<std::string, const robot::RobotJoint*> parentJointByChild;
+        for(const robot::RobotJoint& joint : platform.model.joints) {
+            if(joint.isLoop) {
+                continue;
+            }
+            parentJointByChild.emplace(joint.child, &joint);
+        }
+
+        std::unordered_set<std::string> visited;
+        std::string link = lowerLink;
+        while(!link.empty() && link != platform.model.root && visited.insert(link).second) {
+            const auto parentIt = parentJointByChild.find(link);
+            if(parentIt == parentJointByChild.end()) {
+                break;
+            }
+
+            const robot::RobotJoint* joint = parentIt->second;
+            if(joint->type == robot::JointType::Revolute && joint->dofIndex >= 0) {
+                if(result[0] < 0) {
+                    result[0] = joint->dofIndex;
+                } else if(result[1] < 0 && result[0] != joint->dofIndex) {
+                    result[1] = joint->dofIndex;
+                    return result;
+                }
+            }
+            link = joint->parent;
+        }
+
+        for(const robot::RobotJoint& joint : platform.model.joints) {
+            if(joint.type != robot::JointType::Revolute || joint.dofIndex < 0) {
+                continue;
+            }
+            if(!jointTouchesLegMarker(joint, stewartHookeMarker(), legIndex) ||
+                jointTouchesLegMarker(joint, stewartUpperActuatorMarker(), legIndex)) {
+                continue;
+            }
+
+            if(result[0] < 0) {
+                result[0] = joint.dofIndex;
+            } else if(result[1] < 0 && result[0] != joint.dofIndex) {
+                result[1] = joint.dofIndex;
+                break;
+            }
+        }
+        return result;
+    }
+
+    void setStewartLegJointValues(
+        robotinstance::RobotInstance& instance,
+        const StewartLegRuntimeControl& leg,
+        double q0,
+        double q1,
+        double travel)
+    {
+        if(leg.baseRevoluteDofIndices[0] >= 0) {
+            instance.setJoint(static_cast<std::size_t>(leg.baseRevoluteDofIndices[0]), q0);
+        }
+        if(leg.baseRevoluteDofIndices[1] >= 0) {
+            instance.setJoint(static_cast<std::size_t>(leg.baseRevoluteDofIndices[1]), q1);
+        }
+        if(leg.actuatorDofIndex >= 0) {
+            instance.setJoint(static_cast<std::size_t>(leg.actuatorDofIndex), travel);
+        }
+    }
+
+    double wrapAngleNear(double value, double reference)
+    {
+        constexpr double kPi = 3.14159265358979323846;
+        constexpr double kTwoPi = 2.0 * kPi;
+        while(value - reference > kPi) {
+            value -= kTwoPi;
+        }
+        while(reference - value > kPi) {
+            value += kTwoPi;
+        }
+        return value;
+    }
+
+    double squaredAngleDistance(double value, double reference)
+    {
+        const double diff = wrapAngleNear(value, reference) - reference;
+        return diff * diff;
+    }
+
+    collision::Vec3 stewartLegPlatformAnchorWorld(
+        const RuntimeRobot& platform,
+        const StewartLegRuntimeControl& leg)
+    {
+        if(!platform.instance || leg.upperLink.empty()) {
+            return collision::Vec3::Zero();
+        }
+
+        return platform.instance->getLinkTransform(leg.upperLink) *
+            leg.platformAnchorLocalInUpperLink;
+    }
+
+    collision::Vec3 stewartTargetPlatformAnchorWorld(
+        const RuntimeRobot& platform,
+        int legIndex)
+    {
+        const collision::Transform3 poseTransform =
+            kine::StewartPlatformKinematics::poseTransform(platform.parallelPose);
+        const collision::Vec3 localAnchor =
+            poseTransform *
+            platform.parallelGeometry.platformAnchors[static_cast<std::size_t>(legIndex)];
+        return platform.parallelHomeBaseTransform * localAnchor;
+    }
+
+    bool solveStewartLegControl(
+        RuntimeRobot& platform,
+        StewartLegRuntimeControl& leg)
+    {
+        if(!platform.instance || !leg.enabled || leg.legIndex < 0 || leg.legIndex >= 6) {
+            return false;
+        }
+
+        const std::size_t legArrayIndex = static_cast<std::size_t>(leg.legIndex);
+        const double targetLength = platform.parallelActuatorLengths[legArrayIndex];
+        const double travel =
+            leg.actuatorSign *
+            (targetLength - leg.homeLength);
+        double q0 = 0.0;
+        double q1 = 0.0;
+        const auto& state = platform.instance->getState();
+        if(leg.baseRevoluteDofIndices[0] >= 0 &&
+            static_cast<std::size_t>(leg.baseRevoluteDofIndices[0]) < state.q.size()) {
+            q0 = state.q[static_cast<std::size_t>(leg.baseRevoluteDofIndices[0])];
+        }
+        if(leg.baseRevoluteDofIndices[1] >= 0 &&
+            static_cast<std::size_t>(leg.baseRevoluteDofIndices[1]) < state.q.size()) {
+            q1 = state.q[static_cast<std::size_t>(leg.baseRevoluteDofIndices[1])];
+        }
+        const double seedQ0 = q0;
+        const double seedQ1 = q1;
+        double bestQ0 = q0;
+        double bestQ1 = q1;
+        double bestScore = std::numeric_limits<double>::max();
+        const collision::Vec3 target = stewartTargetPlatformAnchorWorld(platform, leg.legIndex);
+
+        constexpr double kStep = 1.0e-5;
+        constexpr double kTolerance = 1.0e-5;
+        constexpr double kContinuityWeight = 1.0e-4;
+        constexpr int kMaxIterations = 12;
+
+        for(int iteration = 0; iteration < kMaxIterations; ++iteration) {
+            setStewartLegJointValues(*platform.instance, leg, q0, q1, travel);
+            platform.instance->update();
+            const collision::Vec3 residual =
+                stewartLegPlatformAnchorWorld(platform, leg) - target;
+            const double residualNorm = residual.norm();
+            const double continuityCost =
+                kContinuityWeight *
+                (squaredAngleDistance(q0, seedQ0) +
+                    squaredAngleDistance(q1, seedQ1));
+            const double score = residualNorm + continuityCost;
+            if(score < bestScore) {
+                bestScore = score;
+                bestQ0 = q0;
+                bestQ1 = q1;
+            }
+            if(residualNorm <= kTolerance) {
+                return true;
+            }
+
+            Eigen::Matrix<double, 3, 2> jacobian;
+            for(int column = 0; column < 2; ++column) {
+                double probeQ0 = q0;
+                double probeQ1 = q1;
+                if(column == 0) {
+                    probeQ0 += kStep;
+                } else {
+                    probeQ1 += kStep;
+                }
+
+                setStewartLegJointValues(*platform.instance, leg, probeQ0, probeQ1, travel);
+                platform.instance->update();
+                jacobian.col(column) =
+                    (stewartLegPlatformAnchorWorld(platform, leg) -
+                        (target + residual)) /
+                    kStep;
+            }
+
+            const Eigen::Matrix2d normal =
+                jacobian.transpose() * jacobian +
+                Eigen::Matrix2d::Identity() * (1.0e-8 + kContinuityWeight);
+            const Eigen::Vector2d prior(
+                wrapAngleNear(q0, seedQ0) - seedQ0,
+                wrapAngleNear(q1, seedQ1) - seedQ1);
+            const Eigen::Vector2d delta =
+                normal.ldlt().solve(
+                    jacobian.transpose() * residual +
+                    kContinuityWeight * prior);
+            if(!std::isfinite(delta.x()) || !std::isfinite(delta.y())) {
+                break;
+            }
+
+            q0 = wrapAngleNear(q0 - std::clamp(delta.x(), -0.25, 0.25), seedQ0);
+            q1 = wrapAngleNear(q1 - std::clamp(delta.y(), -0.25, 0.25), seedQ1);
+        }
+
+        setStewartLegJointValues(*platform.instance, leg, bestQ0, bestQ1, travel);
+        platform.instance->update();
+        const double finalError =
+            (stewartLegPlatformAnchorWorld(platform, leg) - target).norm();
+        if(finalError > 5.0e-3) {
+            LOG_WARNING("rs2026") << "Stewart leg IK residual is high: robot="
+                << platform.documentId
+                << ", leg=" << (leg.legIndex + 1)
+                << ", residual=" << finalError << " m";
+        }
+        return true;
+    }
+
+    void solveStewartInternalLegControls(RuntimeRobot& platform)
+    {
+        if(!platform.parallelControlEnabled || !platform.instance) {
+            return;
+        }
+
+        for(StewartLegRuntimeControl& leg : platform.parallelLegControls) {
+            solveStewartLegControl(platform, leg);
+        }
+    }
+
+    double distanceBetweenLinks(
+        const RuntimeRobot& follower,
+        const std::string& a,
+        const std::string& b)
+    {
+        if(!follower.instance || a.empty() || b.empty()) {
+            return 0.0;
+        }
+
+        return (follower.instance->getLinkTransform(a).translation() -
+            follower.instance->getLinkTransform(b).translation()).norm();
+    }
+
+    double calibrateStewartFollowerActuatorSign(
+        RuntimeRobot& follower,
+        int dofIndex,
+        const std::string& baseLink,
+        const std::string& platformLink)
+    {
+        if(!follower.instance || dofIndex < 0) {
+            return 1.0;
+        }
+
+        constexpr double kProbe = 1.0e-4;
+        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), 0.0);
+        follower.instance->update();
+        const double homeDistance = distanceBetweenLinks(follower, baseLink, platformLink);
+
+        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), kProbe);
+        follower.instance->update();
+        const double probeDistance = distanceBetweenLinks(follower, baseLink, platformLink);
+
+        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), 0.0);
+        follower.instance->update();
+
+        return probeDistance >= homeDistance ? 1.0 : -1.0;
+    }
+
+    double calibrateStewartInternalActuatorSign(
+        RuntimeRobot& platform,
+        const StewartLegRuntimeControl& leg)
+    {
+        if(!platform.instance ||
+            leg.actuatorDofIndex < 0 ||
+            leg.legIndex < 0 ||
+            leg.legIndex >= 6) {
+            return 1.0;
+        }
+
+        const std::size_t dofIndex = static_cast<std::size_t>(leg.actuatorDofIndex);
+        const auto& state = platform.instance->getState();
+        const double oldQ = dofIndex < state.q.size() ? state.q[dofIndex] : 0.0;
+        const std::size_t legArrayIndex = static_cast<std::size_t>(leg.legIndex);
+        const collision::Vec3 baseAnchorWorld =
+            platform.parallelHomeBaseTransform *
+            platform.parallelGeometry.baseAnchors[legArrayIndex];
+
+        constexpr double kProbe = 1.0e-4;
+        platform.instance->setJoint(dofIndex, 0.0);
+        platform.instance->update();
+        const double homeDistance =
+            (stewartLegPlatformAnchorWorld(platform, leg) - baseAnchorWorld).norm();
+
+        platform.instance->setJoint(dofIndex, kProbe);
+        platform.instance->update();
+        const double probeDistance =
+            (stewartLegPlatformAnchorWorld(platform, leg) - baseAnchorWorld).norm();
+
+        platform.instance->setJoint(dofIndex, oldQ);
+        platform.instance->update();
+
+        return probeDistance >= homeDistance ? 1.0 : -1.0;
+    }
+
+    Eigen::Matrix4d makeLegFollowerAffine(
+        const collision::Transform3& platformHomeTransform,
+        const kine::StewartPlatformPose& pose,
+        const collision::Vec3& homeStart,
+        const collision::Vec3& homeEnd)
+    {
+        const Eigen::Vector3d currentStart = homeStart;
+        const Eigen::Vector3d currentEnd =
+            kine::StewartPlatformKinematics::poseTransform(pose) * homeEnd;
+
+        const Eigen::Vector3d homeVector = homeEnd - homeStart;
+        const Eigen::Vector3d currentVector = currentEnd - currentStart;
+        const double homeLength = homeVector.norm();
+        const double currentLength = currentVector.norm();
+        if(homeLength < 1.0e-9 || currentLength < 1.0e-9) {
+            return Eigen::Matrix4d::Identity();
+        }
+
+        const Eigen::Vector3d homeAxis = homeVector / homeLength;
+        const Eigen::Quaterniond rotation =
+            Eigen::Quaterniond::FromTwoVectors(homeVector, currentVector).normalized();
+        const Eigen::Matrix3d stretch =
+            Eigen::Matrix3d::Identity() +
+            ((currentLength / homeLength) - 1.0) *
+                (homeAxis * homeAxis.transpose());
+        const Eigen::Matrix3d linear = rotation.toRotationMatrix() * stretch;
+
+        Eigen::Matrix4d local = Eigen::Matrix4d::Identity();
+        local.block<3, 3>(0, 0) = linear;
+        local.block<3, 1>(0, 3) = currentStart - linear * homeStart;
+
+        return platformHomeTransform.matrix() *
+            local *
+            platformHomeTransform.inverse().matrix();
+    }
+
+    void captureStewartFollowerDrivenLinks(RuntimeRobot& follower, int legIndex)
+    {
+        follower.parallelFollowerDrivenLinks.clear();
+        follower.parallelFollowerHomeLinkTransforms.clear();
+
+        if(!follower.instance) {
+            return;
+        }
+
+        for(const std::string& linkName : follower.model.linkNames) {
+            if(linkName == follower.model.root || linkName == follower.model.base_link) {
+                continue;
+            }
+            if(stewartLegIndexFromLinkName(linkName) != legIndex) {
+                continue;
+            }
+
+            follower.parallelFollowerDrivenLinks.push_back(linkName);
+            follower.parallelFollowerHomeLinkTransforms[linkName] =
+                follower.instance->getLinkTransform(linkName);
+        }
+    }
+
+    void configureStewartInternalActuatorDofs(RuntimeRobot& platform)
+    {
+        platform.parallelActuatorDofIndices.fill(-1);
+        platform.parallelActuatorSigns.fill(1.0);
+        if(!platform.instance) {
+            return;
+        }
+
+        for(int legIndex = 0; legIndex < 6; ++legIndex) {
+            const std::string upperLink = findFirstLinkForLeg(
+                platform.model,
+                stewartUpperActuatorMarker(),
+                legIndex);
+            if(upperLink.empty()) {
+                continue;
+            }
+
+            std::string baseLink = findFirstLinkForLeg(
+                platform.model,
+                stewartLowerActuatorMarker(),
+                legIndex);
+            if(baseLink.empty()) {
+                baseLink = findFirstLinkForLeg(
+                    platform.model,
+                    stewartHookeMarker(),
+                    legIndex);
+            }
+
+            const int dofIndex = findStewartFollowerActuatorDofIndex(platform, legIndex);
+            const std::size_t index = static_cast<std::size_t>(legIndex);
+            platform.parallelActuatorDofIndices[index] = dofIndex;
+
+            StewartLegRuntimeControl& leg = platform.parallelLegControls[index];
+            leg.enabled = dofIndex >= 0;
+            leg.legIndex = legIndex;
+            leg.lowerLink = baseLink;
+            leg.upperLink = upperLink;
+            leg.baseRevoluteDofIndices =
+                findStewartBaseRevoluteDofIndices(platform, legIndex, baseLink);
+            leg.actuatorDofIndex = dofIndex;
+            leg.actuatorSign = 1.0;
+            leg.homeLength = platform.parallelActuatorHomeLengths[index];
+            leg.platformAnchorLocalInUpperLink = collision::Vec3::Zero();
+            if(!upperLink.empty()) {
+                const collision::Vec3 homePlatformAnchorWorld =
+                    platform.parallelHomeBaseTransform *
+                    platform.parallelGeometry.platformAnchors[index];
+                leg.platformAnchorLocalInUpperLink =
+                    platform.instance->getLinkTransform(upperLink).inverse() *
+                    homePlatformAnchorWorld;
+            }
+            platform.parallelActuatorSigns[index] =
+                calibrateStewartInternalActuatorSign(platform, leg);
+            leg.actuatorSign = platform.parallelActuatorSigns[index];
+
+            if(leg.enabled &&
+                (leg.baseRevoluteDofIndices[0] < 0 || leg.baseRevoluteDofIndices[1] < 0)) {
+                leg.enabled = false;
+                LOG_WARNING("rs2026") << "Stewart leg IK disabled because base revolute DOFs are incomplete: robot="
+                    << platform.documentId
+                    << ", leg=" << (legIndex + 1)
+                    << ", dof0=" << leg.baseRevoluteDofIndices[0]
+                    << ", dof1=" << leg.baseRevoluteDofIndices[1];
+            }
+        }
+    }
+
+    void captureStewartInternalPlatformVisuals(RuntimeRobot& platform)
+    {
+        platform.parallelInternalPlatformVisualsEnabled = false;
+        platform.parallelInternalPlatformDrivenLinks.clear();
+        platform.parallelInternalPlatformHomeLocalTransforms.clear();
+
+        if(!platform.instance) {
+            return;
+        }
+
+        const collision::Transform3 baseInverse =
+            platform.parallelHomeBaseTransform.inverse();
+        for(const std::string& linkName : platform.model.linkNames) {
+            if(!isStewartInternalPlatformDrivenLink(linkName)) {
+                continue;
+            }
+
+            platform.parallelInternalPlatformDrivenLinks.push_back(linkName);
+            platform.parallelInternalPlatformHomeLocalTransforms[linkName] =
+                baseInverse * platform.instance->getLinkTransform(linkName);
+        }
+
+        platform.parallelInternalPlatformVisualsEnabled =
+            !platform.parallelInternalPlatformDrivenLinks.empty();
+    }
+
+    void applyStewartInternalPlatformVisualOverride(RuntimeRobot& platform)
+    {
+        if(!platform.parallelControlEnabled ||
+            !platform.parallelInternalPlatformVisualsEnabled ||
+            !platform.visualBridge) {
+            return;
+        }
+
+        const collision::Transform3 poseTransform =
+            kine::StewartPlatformKinematics::poseTransform(platform.parallelPose);
+        for(const std::string& linkName : platform.parallelInternalPlatformDrivenLinks) {
+            const auto homeIt =
+                platform.parallelInternalPlatformHomeLocalTransforms.find(linkName);
+            if(homeIt == platform.parallelInternalPlatformHomeLocalTransforms.end()) {
+                continue;
+            }
+
+            const auto node = platform.visualBridge->linkNode(linkName);
+            if(!node) {
+                continue;
+            }
+
+            const collision::Transform3 linkTransform =
+                platform.parallelHomeBaseTransform * poseTransform * homeIt->second;
+            node->setLocal(math::eigenToGlm(linkTransform.matrix()));
+            if(platform.collisionInstance) {
+                platform.collisionInstance->setLinkTransform(linkName, linkTransform);
+            }
+        }
+    }
+
+    void applyStewartFollowerVisualOverride(
+        const RuntimeRobot& platform,
+        RuntimeRobot& follower)
+    {
+        if(!platform.parallelControlEnabled ||
+            !follower.parallelFollowerEnabled ||
+            !follower.parallelFollowerAnchorsValid ||
+            !follower.visualBridge ||
+            follower.parallelFollowerDrivenLinks.empty()) {
+            return;
+        }
+
+        const Eigen::Matrix4d followerAffine = makeLegFollowerAffine(
+            platform.parallelHomeBaseTransform,
+            platform.parallelPose,
+            follower.parallelFollowerHomeBaseAnchor,
+            follower.parallelFollowerHomePlatformAnchor);
+
+        for(const std::string& linkName : follower.parallelFollowerDrivenLinks) {
+            const auto homeIt = follower.parallelFollowerHomeLinkTransforms.find(linkName);
+            if(homeIt == follower.parallelFollowerHomeLinkTransforms.end()) {
+                continue;
+            }
+
+            const auto node = follower.visualBridge->linkNode(linkName);
+            if(!node) {
+                continue;
+            }
+
+            const Eigen::Matrix4d linkTransform =
+                followerAffine * homeIt->second.matrix();
+            node->setLocal(math::eigenToGlm(linkTransform));
+        }
+    }
+
+    void configureParallelControlIfNeeded(
+        RuntimeRobot& runtime,
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        if(!isStewartSimscapePlatformModel(robotDesc, model)) {
+            return;
+        }
+
+        runtime.parallelControlEnabled = true;
+        runtime.parallelHomeBaseTransform = runtime.baseTransform;
+        runtime.parallelGeometry = kine::StewartPlatformKinematics::makeDefaultGeometry();
+        runtime.parallelPose = kine::StewartPlatformPose();
+
+        std::string error;
+        if(!kine::StewartPlatformKinematics::computeActuatorLengths(
+               runtime.parallelGeometry,
+               runtime.parallelPose,
+               runtime.parallelActuatorLengths,
+               &error)) {
+            runtime.parallelControlEnabled = false;
+            LOG_WARNING("rs2026") << "Failed to initialize Stewart platform control: robot="
+                << robotDesc.id << ", error=" << error;
+            return;
+        }
+        runtime.parallelActuatorHomeLengths = runtime.parallelActuatorLengths;
+
+        LOG_INFO("rs2026") << "Stewart platform task-space control enabled: robot="
+            << robotDesc.id
+            << ", sourceModelIndex=" << robotDesc.sourceModelIndex;
+    }
+
+    void configureParallelFollowerIfNeeded(
+        RuntimeRobot& runtime,
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        if(!isStewartSimscapeFollowerFragment(robotDesc, model)) {
+            return;
+        }
+
+        runtime.parallelFollowerEnabled = true;
+        runtime.parallelFollowerLegIndex = -1;
+        runtime.parallelFollowerHomeTransform = runtime.baseTransform;
+
+        LOG_INFO("rs2026") << "Stewart platform follower candidate enabled: robot="
+            << robotDesc.id
+            << ", sourceModelIndex=" << robotDesc.sourceModelIndex;
     }
 
     RuntimeRobot* findRuntimeRobot(
@@ -2361,10 +3039,8 @@ namespace
         const Eigen::Matrix4d view = camera->view().cast<double>();
         const Eigen::Matrix4d projection = camera->projection().cast<double>();
         const Eigen::Matrix4d inverseViewProjection = (projection * view).inverse();
-        const bool perspectiveProjection = std::abs(projection(3, 3)) < 1.0e-9;
-        const double nearNdcZ = perspectiveProjection ? -1.0 : 0.0;
 
-        Eigen::Vector4d nearPoint = inverseViewProjection * Eigen::Vector4d(ndcX, ndcY, nearNdcZ, 1.0);
+        Eigen::Vector4d nearPoint = inverseViewProjection * Eigen::Vector4d(ndcX, ndcY, -1.0, 1.0);
         Eigen::Vector4d farPoint = inverseViewProjection * Eigen::Vector4d(ndcX, ndcY, 1.0, 1.0);
         if(std::abs(nearPoint.w()) < 1.0e-9 || std::abs(farPoint.w()) < 1.0e-9) {
             return false;
@@ -2377,11 +3053,7 @@ namespace
             return false;
         }
 
-        if(perspectiveProjection) {
-            ray.origin = camera->position().cast<double>();
-        } else {
-            ray.origin = nearPoint.head<3>();
-        }
+        ray.origin = camera->position().cast<double>();
         ray.direction = direction.normalized();
         return isFiniteVec3(ray.origin) && isFiniteVec3(ray.direction);
     }
@@ -2431,197 +3103,6 @@ namespace
             static_cast<float>(point.z()),
             1.0f);
         return Eigen::Vector3d(world.x, world.y, world.z);
-    }
-
-    Eigen::Vector3d surfaceScalarTriangleCentroid(
-        const RuntimeSurfaceScalarSubMesh& subMesh,
-        std::uint32_t triangle)
-    {
-        const std::size_t offset = static_cast<std::size_t>(triangle) * 3;
-        return (subMesh.positions[subMesh.indices[offset]]
-            + subMesh.positions[subMesh.indices[offset + 1]]
-            + subMesh.positions[subMesh.indices[offset + 2]]) / 3.0;
-    }
-
-    std::int32_t buildSurfaceScalarBvhNode(
-        RuntimeSurfaceScalarSubMesh& subMesh,
-        std::uint32_t firstTriangle,
-        std::uint32_t triangleCount)
-    {
-        RuntimeSurfaceScalarSubMesh::BvhNode node;
-        node.minimum = Eigen::Vector3d::Constant(std::numeric_limits<double>::max());
-        node.maximum = Eigen::Vector3d::Constant(std::numeric_limits<double>::lowest());
-        Eigen::Vector3d centroidMinimum = node.minimum;
-        Eigen::Vector3d centroidMaximum = node.maximum;
-        for(std::uint32_t offset = 0; offset < triangleCount; ++offset) {
-            const std::uint32_t triangle = subMesh.triangleOrder[firstTriangle + offset];
-            const std::size_t indexOffset = static_cast<std::size_t>(triangle) * 3;
-            for(std::size_t corner = 0; corner < 3; ++corner) {
-                const Eigen::Vector3d& position =
-                    subMesh.positions[subMesh.indices[indexOffset + corner]];
-                node.minimum = node.minimum.cwiseMin(position);
-                node.maximum = node.maximum.cwiseMax(position);
-            }
-            const Eigen::Vector3d centroid = surfaceScalarTriangleCentroid(subMesh, triangle);
-            centroidMinimum = centroidMinimum.cwiseMin(centroid);
-            centroidMaximum = centroidMaximum.cwiseMax(centroid);
-        }
-
-        const std::int32_t nodeIndex =
-            static_cast<std::int32_t>(subMesh.bvhNodes.size());
-        subMesh.bvhNodes.push_back(node);
-        constexpr std::uint32_t kLeafTriangleCount = 8;
-        const Eigen::Vector3d centroidExtent = centroidMaximum - centroidMinimum;
-        Eigen::Index splitAxis = 0;
-        centroidExtent.maxCoeff(&splitAxis);
-        if(triangleCount <= kLeafTriangleCount || centroidExtent[splitAxis] <= 1.0e-12) {
-            subMesh.bvhNodes[nodeIndex].firstTriangle = firstTriangle;
-            subMesh.bvhNodes[nodeIndex].triangleCount = triangleCount;
-            return nodeIndex;
-        }
-
-        const std::uint32_t leftCount = triangleCount / 2;
-        auto first = subMesh.triangleOrder.begin() + firstTriangle;
-        auto middle = first + leftCount;
-        auto last = first + triangleCount;
-        std::nth_element(first, middle, last,
-            [&subMesh, splitAxis](std::uint32_t lhs, std::uint32_t rhs) {
-                return surfaceScalarTriangleCentroid(subMesh, lhs)[splitAxis]
-                    < surfaceScalarTriangleCentroid(subMesh, rhs)[splitAxis];
-            });
-
-        const std::int32_t leftChild = buildSurfaceScalarBvhNode(
-            subMesh, firstTriangle, leftCount);
-        const std::int32_t rightChild = buildSurfaceScalarBvhNode(
-            subMesh, firstTriangle + leftCount, triangleCount - leftCount);
-        subMesh.bvhNodes[nodeIndex].leftChild = leftChild;
-        subMesh.bvhNodes[nodeIndex].rightChild = rightChild;
-        return nodeIndex;
-    }
-
-    void buildSurfaceScalarBvh(RuntimeSurfaceScalarSubMesh& subMesh)
-    {
-        subMesh.triangleOrder.clear();
-        subMesh.bvhNodes.clear();
-        const std::size_t triangleCount = subMesh.indices.size() / 3;
-        subMesh.triangleOrder.reserve(triangleCount);
-        for(std::size_t triangle = 0; triangle < triangleCount; ++triangle) {
-            const std::size_t offset = triangle * 3;
-            if(subMesh.indices[offset] >= subMesh.positions.size() ||
-                subMesh.indices[offset + 1] >= subMesh.positions.size() ||
-                subMesh.indices[offset + 2] >= subMesh.positions.size()) {
-                continue;
-            }
-            subMesh.triangleOrder.push_back(static_cast<std::uint32_t>(triangle));
-        }
-        if(subMesh.triangleOrder.empty()) {
-            return;
-        }
-        subMesh.bvhNodes.reserve(subMesh.triangleOrder.size() / 4 + 1);
-        buildSurfaceScalarBvhNode(
-            subMesh,
-            0,
-            static_cast<std::uint32_t>(subMesh.triangleOrder.size()));
-    }
-
-    bool intersectSurfaceScalarBvhNode(
-        const RuntimeSurfaceScalarSubMesh::BvhNode& node,
-        const ProjectScenePickRay& ray,
-        double maximumDistance)
-    {
-        double nearDistance = 0.0;
-        double farDistance = maximumDistance;
-        for(int axis = 0; axis < 3; ++axis) {
-            if(std::abs(ray.direction[axis]) <= 1.0e-12) {
-                if(ray.origin[axis] < node.minimum[axis] ||
-                    ray.origin[axis] > node.maximum[axis]) {
-                    return false;
-                }
-                continue;
-            }
-            double nearAxis = (node.minimum[axis] - ray.origin[axis]) /
-                ray.direction[axis];
-            double farAxis = (node.maximum[axis] - ray.origin[axis]) /
-                ray.direction[axis];
-            if(nearAxis > farAxis) {
-                std::swap(nearAxis, farAxis);
-            }
-            nearDistance = std::max(nearDistance, nearAxis);
-            farDistance = std::min(farDistance, farAxis);
-            if(nearDistance > farDistance) {
-                return false;
-            }
-        }
-        return farDistance >= 0.0;
-    }
-
-    bool findSurfaceScalarVertex(
-        const RuntimeSurfaceScalarSubMesh& subMesh,
-        const ProjectScenePickRay& ray,
-        double& nearestDistance,
-        std::uint32_t& nearestVertex)
-    {
-        if(subMesh.bvhNodes.empty()) {
-            return false;
-        }
-        bool found = false;
-        std::vector<std::int32_t> stack;
-        stack.reserve(64);
-        stack.push_back(0);
-        while(!stack.empty()) {
-            const std::int32_t nodeIndex = stack.back();
-            stack.pop_back();
-            const RuntimeSurfaceScalarSubMesh::BvhNode& node =
-                subMesh.bvhNodes[static_cast<std::size_t>(nodeIndex)];
-            if(!intersectSurfaceScalarBvhNode(node, ray, nearestDistance)) {
-                continue;
-            }
-            if(node.triangleCount == 0) {
-                if(node.leftChild >= 0) {
-                    stack.push_back(node.leftChild);
-                }
-                if(node.rightChild >= 0) {
-                    stack.push_back(node.rightChild);
-                }
-                continue;
-            }
-
-            for(std::uint32_t offset = 0; offset < node.triangleCount; ++offset) {
-                const std::uint32_t triangle =
-                    subMesh.triangleOrder[node.firstTriangle + offset];
-                const std::size_t indexOffset = static_cast<std::size_t>(triangle) * 3;
-                const std::uint32_t indexA = subMesh.indices[indexOffset];
-                const std::uint32_t indexB = subMesh.indices[indexOffset + 1];
-                const std::uint32_t indexC = subMesh.indices[indexOffset + 2];
-                double distance = 0.0;
-                double barycentricB = 0.0;
-                double barycentricC = 0.0;
-                if(!intersectRayTriangle(
-                    ray,
-                    subMesh.positions[indexA],
-                    subMesh.positions[indexB],
-                    subMesh.positions[indexC],
-                    distance,
-                    barycentricB,
-                    barycentricC) || distance >= nearestDistance) {
-                    continue;
-                }
-
-                const double barycentricA = 1.0 - barycentricB - barycentricC;
-                nearestVertex = indexA;
-                double largestWeight = barycentricA;
-                if(barycentricB > largestWeight) {
-                    nearestVertex = indexB;
-                    largestWeight = barycentricB;
-                }
-                if(barycentricC > largestWeight) {
-                    nearestVertex = indexC;
-                }
-                nearestDistance = distance;
-                found = true;
-            }
-        }
-        return found;
     }
 
     void applyCollisionDetectorRuntimeOptions(
@@ -3041,7 +3522,6 @@ namespace
             debug.drawLine(toGlmVec3(corners[i]), toGlmVec3(corners[(i + 1) % 4]), fovColor);
         }
     }
-
 }
 
 struct ProjectScene::Impl
@@ -3086,14 +3566,13 @@ struct ProjectScene::Impl
     std::vector<MaterialOverride> pairPreviewOverrides;
     int width = 1;
     int height = 1;
-    std::shared_ptr<ViewerCamera> viewerCamera;
+    cameracore::CameraControllerPtr controller;
     scenecore::SceneGraph sceneGraph;
     scenecore::Renderer renderer;
     std::shared_ptr<scenecore::CameraNode> mainCameraNode;
     std::shared_ptr<scenecore::MeshPass> collisionMeshPass;
     std::shared_ptr<scenecore::PrimitivePass> collisionPrimitivePass;
     std::shared_ptr<scenecore::TrajectoryPass> collisionLinePass;
-    std::shared_ptr<SceneObjectHoverPass> sceneObjectHoverPass;
     simulation_project::ProjectDocument projectDocument;
     bool projectDocumentSet = false;
     std::filesystem::path projectBasePath;
@@ -3142,27 +3621,6 @@ struct ProjectScene::Impl
     std::unordered_map<std::string, ObjectCollisionVariantMeshPreviewCache>
         objectCollisionVariantMeshPreviews;
     std::uint64_t objectCollisionVariantMeshPreviewRevision = 1;
-    std::vector<ProjectScene::CoatingTrajectoryPreviewPoint> coatingTrajectoryPreview;
-    std::shared_ptr<VisibleModelNode> coatingTrajectoryPreviewNode;
-    std::unordered_map<std::string, bool> coatingModelVisibilityOverrides;
-    bool coatingTrajectoryPreviewVisible = false;
-    bool coatingTrajectoryPreviewDirty = false;
-    ProjectScene::CoatingPredictionDebugState coatingPredictionDebugState;
-    ProjectScene::CoatingPredictionDebugVisibility coatingPredictionDebugVisibility;
-    std::shared_ptr<VisibleModelNode> coatingPredictionSeedNode;
-    std::shared_ptr<VisibleModelNode> coatingPredictionCylindricalNode;
-    std::shared_ptr<VisibleModelNode> coatingPredictionAxisNode;
-    std::shared_ptr<VisibleModelNode> coatingPredictionLocalSectorNode;
-    std::shared_ptr<VisibleModelNode> coatingPredictionSelectedProfileNode;
-    std::shared_ptr<VisibleModelNode> coatingPredictionSprayPointsNode;
-    std::shared_ptr<VisibleModelNode> coatingPredictionSprayDirectionsNode;
-    std::string coatingPredictionColoredObjectId;
-    std::shared_ptr<rendercore::Model> coatingPredictionPreviousModel;
-    std::vector<std::shared_ptr<rendercore::Material>>
-        coatingPredictionPreviousOriginalMaterials;
-    bool coatingPredictionLocalColorDirty = false;
-    bool coatingPredictionDebugDirty = false;
-    bool coatingAnalysisActive = false;
     CameraLookAtState cameraLookAt;
     bool cameraAnimationActive = false;
     CameraLookAtState cameraAnimationStart;
@@ -3170,8 +3628,6 @@ struct ProjectScene::Impl
     double cameraAnimationElapsed = 0.0;
     double cameraAnimationDuration = 0.45;
     double lastCameraAnimationUpdateTime = -1.0;
-    Eigen::Vector3f rotationCenterMarkerPosition = Eigen::Vector3f::Zero();
-    bool rotationCenterMarkerVisible = false;
 
     bool initializeOpenGlRuntime();
     void applyCollisionOverlayRenderConfig();
@@ -3179,15 +3635,9 @@ struct ProjectScene::Impl
     CameraSceneBounds fullSceneBounds() const;
     CameraSceneBounds robotLinkBounds(const std::string& robotId, const std::string& linkName) const;
     CameraSceneBounds sceneObjectBounds(const std::string& objectId) const;
-    CameraSceneBounds coatingSceneBounds() const;
     CameraSceneBounds mountedAttachmentBounds(const std::string& attachmentId) const;
     void applyCameraLookAt(const CameraLookAtState& state);
-    bool setRotationCenter(const Eigen::Vector3d& center);
-    void animateCameraTo(
-        const CameraLookAtState& state,
-        double duration,
-        bool preserveOrbitCenter = false);
-    void focusCoatingObject(const std::string& objectId, double duration);
+    void animateCameraTo(const CameraLookAtState& state, double duration);
     void updateCameraAnimation(double timeSeconds);
     void applyMountFrameLinkFocusVisibility();
     void invalidateCollisionRuntime();
@@ -3198,6 +3648,13 @@ struct ProjectScene::Impl
     void buildProjectPointClouds();
     void buildProjectToolAttachments();
     void syncProjectToolAttachments();
+    void configureStewartGroups();
+    void syncStewartFollowers(const RuntimeRobot& platform);
+    void syncAllStewartFollowers();
+    void setStewartPlatformBaseTransform(RuntimeRobot& platform, const collision::Transform3& baseTransform);
+    void applyStewartInternalPlatformVisualOverrides(RuntimeRobot& platform);
+    void applyStewartFollowerVisualOverrides(const RuntimeRobot& platform);
+    void applyAllStewartFollowerVisualOverrides();
     void ensureToolAttachmentCollisionObjects();
     bool ensureCollisionRuntimeBuilt();
     void registerRuntimeCollisionObjects();
@@ -3214,12 +3671,6 @@ struct ProjectScene::Impl
     void updateObjectCollisionModelVariantPreviewMeshes();
     void hideObjectCollisionModelVariantPreviewMeshes();
     void drawInteractionModeHints();
-    void drawRotationCenterMarker();
-    void rebuildCoatingTrajectoryPreviewModel();
-    void rebuildCoatingPredictionDebugModel();
-    void drawCoatingPredictionDebug();
-    void applyCoatingPredictionLocalColors();
-    void restoreCoatingPredictionLocalColors();
     void drawToolAssetPreviewFrames();
     void buildToolAssetPreview();
     void updateToolAssetPreviewModel();
@@ -3237,331 +3688,6 @@ struct ProjectScene::Impl
     void invalidateCollisionGeometryOverlayCache();
     void filterCollisionDebugDrawByVisibleVariants(CollisionDebugDrawData& data) const;
 };
-
-void ProjectScene::Impl::rebuildCoatingPredictionDebugModel()
-{
-    coatingPredictionDebugDirty = false;
-    const ProjectScene::CoatingPredictionDebugState& state = coatingPredictionDebugState;
-
-    const auto appendVertex = [](std::vector<rendercore::Vertex>& vertices,
-        const Eigen::Vector3f& position) {
-        // Geometry uploads the complete Vertex stride, so every attribute must
-        // have a deterministic value even for unlit line/point primitives.
-        rendercore::Vertex vertex{};
-        vertex.position[0] = position.x();
-        vertex.position[1] = position.y();
-        vertex.position[2] = position.z();
-        vertices.push_back(vertex);
-    };
-    const auto appendTriangleVertices = [&appendVertex](
-        std::vector<rendercore::Vertex>& vertices,
-        const ProjectScene::CoatingPredictionDebugTriangle& triangle) {
-        appendVertex(vertices, Eigen::Vector3f(
-            static_cast<float>(triangle.ax),
-            static_cast<float>(triangle.ay),
-            static_cast<float>(triangle.az)));
-        appendVertex(vertices, Eigen::Vector3f(
-            static_cast<float>(triangle.bx),
-            static_cast<float>(triangle.by),
-            static_cast<float>(triangle.bz)));
-        appendVertex(vertices, Eigen::Vector3f(
-            static_cast<float>(triangle.cx),
-            static_cast<float>(triangle.cy),
-            static_cast<float>(triangle.cz)));
-    };
-    const auto appendTriangleGroup = [&appendTriangleVertices](
-        std::vector<rendercore::Vertex>& vertices,
-        const std::vector<ProjectScene::CoatingPredictionDebugTriangle>& triangles) {
-        vertices.reserve(vertices.size() + triangles.size() * 3);
-        for(const auto& triangle : triangles) {
-            appendTriangleVertices(vertices, triangle);
-        }
-    };
-    const auto makeMaterial = [](const Eigen::Vector4f& color) {
-        auto material = std::make_shared<rendercore::Material>();
-        material->type = rendercore::MaterialType::Unlit;
-        material->baseColor = color;
-        return material;
-    };
-    const auto setGeometryNode = [this](
-        std::shared_ptr<VisibleModelNode>& node,
-        const char* name,
-        std::vector<rendercore::Vertex>&& vertices,
-        GLenum primitive,
-        const std::shared_ptr<rendercore::Material>& material) {
-        if(vertices.empty()) {
-            if(node) {
-                node->setModel(nullptr);
-                node->setVisible(false);
-            }
-            return;
-        }
-        std::vector<unsigned int> indices(vertices.size());
-        for(std::size_t index = 0; index < indices.size(); ++index) {
-            indices[index] = static_cast<unsigned int>(index);
-        }
-        const std::shared_ptr<rendercore::Model> model =
-            std::make_shared<rendercore::Model>();
-        rendercore::SubMesh subMesh;
-        subMesh.geometry = std::make_shared<rendercore::Geometry>(
-            vertices,
-            indices,
-            primitive);
-        subMesh.material = material;
-        model->addSubMesh(std::move(subMesh));
-        if(!node) {
-            node = std::make_shared<VisibleModelNode>(model);
-            node->setName(name);
-            sceneGraph.root()->addChild(node);
-            sceneGraph.registerNode(node);
-        } else {
-            node->setModel(model);
-        }
-    };
-
-    const auto buildStart = std::chrono::steady_clock::now();
-    std::vector<rendercore::Vertex> cylindricalVertices;
-    std::vector<rendercore::Vertex> seedVertices;
-    appendTriangleGroup(cylindricalVertices, state.cylindricalTriangles);
-    appendTriangleGroup(seedVertices, state.seedTriangles);
-
-    std::vector<rendercore::Vertex> axisVertices;
-    glm::vec3 axisDirection(
-        static_cast<float>(state.axisDirectionX),
-        static_cast<float>(state.axisDirectionY),
-        static_cast<float>(state.axisDirectionZ));
-    if(glm::length(axisDirection) > 1.0e-5f) {
-        axisDirection = glm::normalize(axisDirection);
-        const glm::vec3 axisOrigin(
-            static_cast<float>(state.axisOriginX),
-            static_cast<float>(state.axisOriginY),
-            static_cast<float>(state.axisOriginZ));
-        const float length = static_cast<float>(std::max(0.01, state.axisLength));
-        appendVertex(axisVertices, Eigen::Vector3f(
-            axisOrigin.x - axisDirection.x * length,
-            axisOrigin.y - axisDirection.y * length,
-            axisOrigin.z - axisDirection.z * length));
-        appendVertex(axisVertices, Eigen::Vector3f(
-            axisOrigin.x + axisDirection.x * length,
-            axisOrigin.y + axisDirection.y * length,
-            axisOrigin.z + axisDirection.z * length));
-    }
-
-    std::vector<rendercore::Vertex> profileLineVertices;
-    profileLineVertices.reserve(state.profileLinePoints.size());
-    for(const auto& point : state.profileLinePoints) {
-        appendVertex(profileLineVertices, Eigen::Vector3f(
-            static_cast<float>(point.positionX),
-            static_cast<float>(point.positionY),
-            static_cast<float>(point.positionZ)));
-    }
-    std::vector<rendercore::Vertex> selectedProfileLineVertices;
-    selectedProfileLineVertices.reserve(state.selectedProfileLinePoints.size());
-    for(const auto& point : state.selectedProfileLinePoints) {
-        appendVertex(selectedProfileLineVertices, Eigen::Vector3f(
-            static_cast<float>(point.positionX),
-            static_cast<float>(point.positionY),
-            static_cast<float>(point.positionZ)));
-    }
-
-    std::vector<rendercore::Vertex> selectedSprayPointVertices;
-    std::vector<rendercore::Vertex> selectedSprayDirectionVertices;
-    selectedSprayPointVertices.reserve(state.sprayPoints.size());
-    selectedSprayDirectionVertices.reserve(state.sprayPoints.size() * 2);
-    const float directionLength = static_cast<float>(
-        std::max(0.0005, state.markerRadius * 8.0));
-    for(const auto& point : state.sprayPoints) {
-        const Eigen::Vector3f position(
-            static_cast<float>(point.positionX),
-            static_cast<float>(point.positionY),
-            static_cast<float>(point.positionZ));
-        Eigen::Vector3f direction(
-            static_cast<float>(point.directionX),
-            static_cast<float>(point.directionY),
-            static_cast<float>(point.directionZ));
-        if(direction.squaredNorm() <= 1.0e-12f) {
-            direction = Eigen::Vector3f::UnitX();
-        } else {
-            direction.normalize();
-        }
-        appendVertex(selectedSprayPointVertices, position);
-        appendVertex(selectedSprayDirectionVertices, position);
-        appendVertex(
-            selectedSprayDirectionVertices,
-            position + direction * directionLength);
-    }
-
-    setGeometryNode(coatingPredictionCylindricalNode, "coating_prediction_cylindrical",
-        std::move(cylindricalVertices), GL_TRIANGLES,
-        makeMaterial(Eigen::Vector4f(1.0f, 0.75f, 0.05f, 0.28f)));
-    setGeometryNode(coatingPredictionLocalSectorNode, "coating_prediction_local_sector",
-        std::move(profileLineVertices), GL_LINES,
-        makeMaterial(Eigen::Vector4f(0.10f, 0.90f, 0.30f, 1.0f)));
-    setGeometryNode(coatingPredictionSelectedProfileNode,
-        "coating_prediction_selected_profile",
-        std::move(selectedProfileLineVertices), GL_LINES,
-        makeMaterial(Eigen::Vector4f(1.0f, 0.82f, 0.08f, 1.0f)));
-    setGeometryNode(coatingPredictionSeedNode, "coating_prediction_seed",
-        std::move(seedVertices), GL_TRIANGLES,
-        makeMaterial(Eigen::Vector4f(1.0f, 0.08f, 0.04f, 0.85f)));
-    setGeometryNode(coatingPredictionAxisNode, "coating_prediction_axis",
-        std::move(axisVertices), GL_LINES,
-        makeMaterial(Eigen::Vector4f(0.10f, 0.35f, 1.0f, 1.0f)));
-    const auto sprayMaterial = makeMaterial(Eigen::Vector4f(1.0f, 0.05f, 0.85f, 1.0f));
-    setGeometryNode(coatingPredictionSprayPointsNode, "coating_prediction_spray_points",
-        std::move(selectedSprayPointVertices), GL_POINTS, sprayMaterial);
-    setGeometryNode(coatingPredictionSprayDirectionsNode, "coating_prediction_spray_directions",
-        std::move(selectedSprayDirectionVertices), GL_LINES, sprayMaterial);
-    drawCoatingPredictionDebug();
-    LOG_DEBUG("rs2026") << "Coating prediction debug GPU upload: cylindricalTriangles="
-        << state.cylindricalTriangles.size()
-        << ", localSectorTriangles=" << state.localSectorTriangles.size()
-        << ", seedTriangles=" << state.seedTriangles.size()
-        << ", sprayPointsSkipped=" << state.sprayPoints.size()
-        << ", elapsedMs="
-        << std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - buildStart).count();
-}
-
-void ProjectScene::Impl::restoreCoatingPredictionLocalColors()
-{
-    if(coatingPredictionColoredObjectId.empty()) {
-        return;
-    }
-
-    RuntimeSceneObject* object = findRuntimeObject(
-        objects,
-        coatingPredictionColoredObjectId);
-    if(object != nullptr && object->visualNode && coatingPredictionPreviousModel) {
-        object->visualModel = coatingPredictionPreviousModel;
-        object->visualNode->setModel(coatingPredictionPreviousModel);
-        object->originalMaterials = coatingPredictionPreviousOriginalMaterials;
-        object->highlightState = SceneObjectHighlightState::None;
-    }
-
-    coatingPredictionColoredObjectId.clear();
-    coatingPredictionPreviousModel.reset();
-    coatingPredictionPreviousOriginalMaterials.clear();
-}
-
-void ProjectScene::Impl::applyCoatingPredictionLocalColors()
-{
-    restoreCoatingPredictionLocalColors();
-
-    const ProjectScene::CoatingPredictionDebugState& state =
-        coatingPredictionDebugState;
-    if(!state.visible || !coatingPredictionDebugVisibility.localSector ||
-        state.objectId.empty() || state.localSectorVertexIndices.empty()) {
-        return;
-    }
-
-    RuntimeSceneObject* object = findRuntimeObject(objects, state.objectId);
-    if(object == nullptr || !object->visualNode || !object->pickModel) {
-        return;
-    }
-
-    assetcore::ModelDesc coloredDesc = *object->pickModel;
-    std::unordered_set<std::uint32_t> localVertexIndices;
-    localVertexIndices.reserve(state.localSectorVertexIndices.size());
-    for(const std::uint32_t index : state.localSectorVertexIndices) {
-        localVertexIndices.insert(index);
-    }
-
-    const Eigen::Vector3f originalColor(0.72f, 0.74f, 0.76f);
-    const Eigen::Vector3f localColor(0.15f, 1.0f, 0.35f);
-    std::size_t globalVertexIndex = 0;
-    for(assetcore::SubMeshDesc& subMesh : coloredDesc.subMeshes()) {
-        assetcore::GeometryDesc& geometry = subMesh.geometry;
-        geometry.colors.resize(geometry.positions.size());
-        for(std::size_t vertexIndex = 0;
-            vertexIndex < geometry.positions.size();
-            ++vertexIndex, ++globalVertexIndex) {
-            const Eigen::Vector3f& color = localVertexIndices.count(
-                static_cast<std::uint32_t>(globalVertexIndex)) != 0
-                ? localColor
-                : originalColor;
-            geometry.colors[vertexIndex] = gammaToLinear(color);
-        }
-
-        // Workpiece rendering is two-sided. Preserve that behavior while
-        // leaving all original positions and normals unchanged.
-        if(!geometry.indices.empty()) {
-            const std::size_t originalIndexCount = geometry.indices.size();
-            geometry.indices.reserve(originalIndexCount * 2);
-            for(std::size_t index = 0; index + 2 < originalIndexCount; index += 3) {
-                geometry.indices.push_back(geometry.indices[index]);
-                geometry.indices.push_back(geometry.indices[index + 2]);
-                geometry.indices.push_back(geometry.indices[index + 1]);
-            }
-        }
-    }
-
-    const std::shared_ptr<rendercore::Model> coloredModel =
-        rendercore::ModelManager::instance().buildModelFromDesc(coloredDesc);
-    if(!coloredModel) {
-        LOG_WARNING("rs2026") << "Failed to build local coating color model for object="
-            << state.objectId;
-        return;
-    }
-
-    auto vertexColorMaterial = std::make_shared<rendercore::Material>();
-    vertexColorMaterial->type = rendercore::MaterialType::ScalarOverlay;
-    vertexColorMaterial->baseColor = Eigen::Vector4f::Ones();
-    for(unsigned int subMeshIndex = 0;
-        subMeshIndex < coloredModel->subMeshCount();
-        ++subMeshIndex) {
-        coloredModel->subMesh(subMeshIndex).material = vertexColorMaterial;
-    }
-
-    coatingPredictionColoredObjectId = state.objectId;
-    coatingPredictionPreviousModel = object->visualModel;
-    coatingPredictionPreviousOriginalMaterials = object->originalMaterials;
-    object->visualModel = coloredModel;
-    object->visualNode->setModel(coloredModel);
-    object->originalMaterials.assign(
-        coloredModel->subMeshCount(),
-        vertexColorMaterial);
-    object->highlightState = SceneObjectHighlightState::None;
-}
-
-void ProjectScene::Impl::drawCoatingPredictionDebug()
-{
-    const bool visible = coatingPredictionDebugState.visible;
-    if(coatingPredictionCylindricalNode) {
-        coatingPredictionCylindricalNode->setVisible(
-            visible && coatingPredictionDebugVisibility.cylindricalSurface);
-    }
-    if(coatingPredictionSeedNode) {
-        coatingPredictionSeedNode->setVisible(
-            visible && coatingPredictionDebugVisibility.cylindricalSurface);
-    }
-    if(coatingPredictionAxisNode) {
-        coatingPredictionAxisNode->setVisible(
-            visible && coatingPredictionDebugVisibility.rotationAxis);
-    }
-    if(coatingPredictionLocalSectorNode) {
-        coatingPredictionLocalSectorNode->setVisible(
-            visible && coatingPredictionDebugVisibility.localSector
-            && !coatingPredictionDebugState.profileLinePoints.empty());
-    }
-    if(coatingPredictionSelectedProfileNode) {
-        coatingPredictionSelectedProfileNode->setVisible(
-            visible && coatingPredictionDebugVisibility.localSector
-            && !coatingPredictionDebugState.selectedProfileLinePoints.empty());
-    }
-    if(coatingPredictionSprayPointsNode) {
-        coatingPredictionSprayPointsNode->setVisible(
-            visible && coatingPredictionDebugVisibility.sprayPoints);
-    }
-    if(coatingPredictionSprayDirectionsNode) {
-        coatingPredictionSprayDirectionsNode->setVisible(
-            visible && coatingPredictionDebugVisibility.sprayPoints);
-    }
-    if(coatingPredictionLocalColorDirty) {
-        applyCoatingPredictionLocalColors();
-        coatingPredictionLocalColorDirty = false;
-    }
-}
 
 std::string ProjectScene::Impl::visibleCollisionVariantId(
     const std::string& robotId,
@@ -3700,15 +3826,13 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     rendercore::ShaderLibrary::initialize();
     renderer.initialize();
 
-    mainCameraNode = createMainCamera(sceneGraph, viewerCamera);
+    mainCameraNode = createMainCamera(sceneGraph);
     scenecore::DefaultLighting::createDefaultLighting(sceneGraph, 0.6f);
+    controller = cameracore::CameraFactory::createOrbitController(mainCameraNode->camera());
 
     collisionMeshPass = std::make_shared<scenecore::MeshPass>(rendercore::ShaderLibrary::getShader("MLRobotUBO"));
     collisionPrimitivePass = std::make_shared<scenecore::PrimitivePass>();
     collisionLinePass = std::make_shared<scenecore::TrajectoryPass>();
-    sceneObjectHoverPass = std::make_shared<SceneObjectHoverPass>();
-    sceneObjectHoverPass->setRuntimeSources(&robots, &objects);
-    sceneObjectHoverPass->resize(width, height);
     applyCollisionOverlayRenderConfig();
 
     renderer.addPass(std::make_shared<scenecore::GridPass>(scenecore::GridType::FadedInfiniteGrid));
@@ -3718,7 +3842,6 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     renderer.addPass(std::make_shared<scenecore::AxisPass>());
     renderer.addPass(collisionPrimitivePass);
     renderer.addPass(collisionLinePass);
-    renderer.addPass(sceneObjectHoverPass);
     return true;
 }
 
@@ -3851,6 +3974,7 @@ CameraSceneBounds ProjectScene::Impl::sceneObjectBounds(const std::string& objec
         return bounds;
     }
 
+    bounds.includePoint(object->transform.translation());
     if(object->pointCloudBoundsValid) {
         bounds.includeTransformedBounds(
             object->transform,
@@ -3865,51 +3989,6 @@ CameraSceneBounds ProjectScene::Impl::sceneObjectBounds(const std::string& objec
             bounds.includeAabb(collisionObject.collisionObject->fcl()->getAABB());
         }
     }
-
-    // Some imported workpieces do not have collision geometry. In that case
-    // use the actual rendered mesh so camera fitting does not collapse to the
-    // object's transform origin.
-    if(!object->collisionObject && object->collisionObjects.empty() && object->pickModel) {
-        for(const assetcore::SubMeshDesc& subMesh : object->pickModel->subMeshes()) {
-            for(const Eigen::Vector3f& position : subMesh.geometry.positions) {
-                const Eigen::Vector3d local = transformSurfacePoint(
-                    object->visualLocal,
-                    position.cast<double>());
-                bounds.includePoint(object->transform * local);
-            }
-        }
-    }
-    if(!bounds.valid) {
-        bounds.includePoint(object->transform.translation());
-    }
-    return bounds;
-}
-
-CameraSceneBounds ProjectScene::Impl::coatingSceneBounds() const
-{
-    CameraSceneBounds bounds;
-    for(const RuntimeSceneObject& object : objects) {
-        // Thickness prediction hides robots, point clouds, attachments and
-        // non-target workpieces. Only fit the camera to the rendered target.
-        if(object.objectType == "pointCloud" ||
-           object.objectType == "toolAttachment" ||
-           !object.visualNode ||
-           !object.visualNode->isVisible()) {
-            continue;
-        }
-
-        const auto overrideIt = coatingModelVisibilityOverrides.find(object.documentId);
-        if(overrideIt != coatingModelVisibilityOverrides.end() && !overrideIt->second) {
-            continue;
-        }
-
-        const CameraSceneBounds objectBounds = sceneObjectBounds(object.documentId);
-        if(objectBounds.valid) {
-            bounds.includePoint(objectBounds.min);
-            bounds.includePoint(objectBounds.max);
-        }
-    }
-
     return bounds;
 }
 
@@ -3961,37 +4040,11 @@ void ProjectScene::Impl::applyCameraLookAt(const CameraLookAtState& state)
     cameraLookAt = state;
 }
 
-bool ProjectScene::Impl::setRotationCenter(const Eigen::Vector3d& center)
-{
-    if(!viewerCamera || !isFiniteVec3(center)) {
-        return false;
-    }
-
-    const Eigen::Vector3f rotationCenter = center.cast<float>();
-    if(!rotationCenter.allFinite()) {
-        return false;
-    }
-
-    cameraAnimationActive = false;
-    viewerCamera->setOrbitCenter(rotationCenter);
-    rotationCenterMarkerPosition = rotationCenter;
-    rotationCenterMarkerVisible = false;
-    return true;
-}
-
-void ProjectScene::Impl::animateCameraTo(
-    const CameraLookAtState& state,
-    double duration,
-    bool preserveOrbitCenter)
+void ProjectScene::Impl::animateCameraTo(const CameraLookAtState& state, double duration)
 {
     if(!state.valid || !mainCameraNode || !mainCameraNode->camera()) {
         return;
     }
-
-    if(viewerCamera && !preserveOrbitCenter) {
-        viewerCamera->clearOrbitCenter();
-    }
-    rotationCenterMarkerVisible = false;
 
     if(!cameraLookAt.valid) {
         cameraLookAt.position = mainCameraNode->camera()->position();
@@ -4008,28 +4061,6 @@ void ProjectScene::Impl::animateCameraTo(
     cameraAnimationDuration = std::max(0.05, duration);
     lastCameraAnimationUpdateTime = -1.0;
     cameraAnimationActive = true;
-}
-
-void ProjectScene::Impl::focusCoatingObject(
-    const std::string& objectId,
-    double duration)
-{
-    if(!initialized || objectId.empty() || !viewerCamera) {
-        return;
-    }
-
-    const CameraSceneBounds bounds = sceneObjectBounds(objectId);
-    if(!bounds.valid) {
-        return;
-    }
-
-    // Keep the user's current orientation and projection mode. A modest
-    // margin leaves the selected workpiece visible without touching the frame.
-    const CameraLookAtState state = makeCameraLookAtStateForCurrentCamera(
-        bounds,
-        viewerCamera,
-        1.20);
-    animateCameraTo(state, duration, true);
 }
 
 void ProjectScene::Impl::updateCameraAnimation(double timeSeconds)
@@ -4066,10 +4097,8 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
         const bool focusedRobot =
             mountFrameLinkFocusActive &&
             robot.documentId == mountFrameFocusRobotId;
-        const bool robotVisible =
-            !coatingAnalysisActive && (showFullScene || focusedRobot);
         if(robot.visualBridge && robot.visualBridge->rootNode()) {
-            robot.visualBridge->rootNode()->setVisible(robotVisible);
+            robot.visualBridge->rootNode()->setVisible(showFullScene || focusedRobot);
         }
 
         if(!robot.visualBridge) {
@@ -4080,9 +4109,8 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
             const std::shared_ptr<scenecore::SceneNode> linkNode = robot.visualBridge->linkNode(linkName);
             if(linkNode) {
                 linkNode->setVisible(
-                    !coatingAnalysisActive &&
-                    (showFullScene ||
-                        (focusedRobot && linkName == mountFrameFocusLinkName)));
+                    showFullScene ||
+                    (focusedRobot && linkName == mountFrameFocusLinkName));
             }
         }
     }
@@ -4104,10 +4132,6 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
                 }
             }
         }
-        const auto coatingVisibility = coatingModelVisibilityOverrides.find(object.documentId);
-        if(coatingVisibility != coatingModelVisibilityOverrides.end()) {
-            visible = visible && coatingVisibility->second;
-        }
         if(object.visualNode) {
             object.visualNode->setVisible(visible);
         }
@@ -4117,9 +4141,9 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
     }
 
     for(RuntimeToolAttachmentVisual& attachment : toolAttachments) {
-        bool attachmentVisible = !coatingAnalysisActive && (showFullScene
+        bool attachmentVisible = showFullScene
             ? attachment.visible
-            : (mountedAttachmentFocusActive && attachment.documentId == mountedAttachmentFocusId));
+            : (mountedAttachmentFocusActive && attachment.documentId == mountedAttachmentFocusId);
         robot_render::MountedAttachmentVisualBridge::setVisible(
             attachment.visual,
             attachmentVisible);
@@ -4197,6 +4221,310 @@ bool ProjectScene::Impl::rebuildMountedAttachmentGraph()
     return true;
 }
 
+void ProjectScene::Impl::syncStewartFollowers(const RuntimeRobot& platform)
+{
+    if(!platform.parallelControlEnabled) {
+        return;
+    }
+
+    for(RuntimeRobot& follower : robots) {
+        if(!follower.parallelFollowerEnabled ||
+            !follower.parallelFollowerAnchorsValid ||
+            follower.documentId == platform.documentId ||
+            !sameStewartSource(platform, follower)) {
+            continue;
+        }
+
+        const std::size_t legIndex =
+            static_cast<std::size_t>(follower.parallelFollowerLegIndex);
+        if(follower.parallelFollowerActuatorDofIndex >= 0 && legIndex < 6) {
+            const double targetLength = platform.parallelActuatorLengths[legIndex];
+            const double travel =
+                follower.parallelFollowerActuatorSign *
+                (targetLength - follower.parallelFollowerHomeLength);
+            follower.instance->setJoint(
+                static_cast<std::size_t>(follower.parallelFollowerActuatorDofIndex),
+                travel);
+        }
+
+        follower.baseTransform = follower.parallelFollowerHomeTransform;
+    }
+}
+
+void ProjectScene::Impl::configureStewartGroups()
+{
+    for(RuntimeRobot& platform : robots) {
+        if(!platform.parallelControlEnabled) {
+            continue;
+        }
+
+        kine::StewartPlatformGeometry importedGeometry = platform.parallelGeometry;
+        std::array<bool, 6> baseAnchorsFound{};
+        std::array<bool, 6> platformAnchorsFound{};
+        std::array<std::vector<collision::Vec3>, 6> baseAnchorCandidates;
+        std::array<std::vector<collision::Vec3>, 6> baseFallbackAnchorCandidates;
+        std::array<std::vector<collision::Vec3>, 6> platformAnchorCandidates;
+
+        const collision::Transform3 platformHomeInverse =
+            platform.parallelHomeBaseTransform.inverse();
+
+        for(RuntimeRobot& candidate : robots) {
+            if(!sameStewartSource(platform, candidate) ||
+                !candidate.instance) {
+                continue;
+            }
+
+            for(int legIndex = 0; legIndex < 6; ++legIndex) {
+                const std::size_t index = static_cast<std::size_t>(legIndex);
+                collectJointAnchorsForLeg(
+                    candidate,
+                    stewartLowerActuatorMarker(),
+                    legIndex,
+                    baseAnchorCandidates[index]);
+                collectJointAnchorsForLeg(
+                    candidate,
+                    stewartHookeMarker(),
+                    legIndex,
+                    baseFallbackAnchorCandidates[index]);
+                collectJointAnchorsForLeg(
+                    candidate,
+                    stewartUpperActuatorMarker(),
+                    legIndex,
+                    platformAnchorCandidates[index]);
+            }
+        }
+
+        for(int legIndex = 0; legIndex < 6; ++legIndex) {
+            const std::size_t index = static_cast<std::size_t>(legIndex);
+            if(baseAnchorCandidates[index].empty()) {
+                baseAnchorCandidates[index] = baseFallbackAnchorCandidates[index];
+            }
+            if(baseAnchorCandidates[index].empty()) {
+                for(RuntimeRobot& candidate : robots) {
+                    if(!sameStewartSource(platform, candidate) ||
+                        !candidate.instance) {
+                        continue;
+                    }
+                    collectLinkOriginAnchorForLeg(
+                        candidate,
+                        stewartLowerActuatorMarker(),
+                        legIndex,
+                        baseAnchorCandidates[index]);
+                }
+            }
+            if(baseAnchorCandidates[index].empty()) {
+                for(RuntimeRobot& candidate : robots) {
+                    if(!sameStewartSource(platform, candidate) ||
+                        !candidate.instance) {
+                        continue;
+                    }
+                    collectLinkOriginAnchorForLeg(
+                        candidate,
+                        stewartHookeMarker(),
+                        legIndex,
+                        baseAnchorCandidates[index]);
+                }
+            }
+            if(platformAnchorCandidates[index].empty()) {
+                for(RuntimeRobot& candidate : robots) {
+                    if(!sameStewartSource(platform, candidate) ||
+                        !candidate.instance) {
+                        continue;
+                    }
+                    collectLinkOriginAnchorForLeg(
+                        candidate,
+                        stewartUpperActuatorMarker(),
+                        legIndex,
+                        platformAnchorCandidates[index]);
+                }
+            }
+
+            collision::Vec3 baseAnchorWorld = collision::Vec3::Zero();
+            if(chooseLowestLocalZAnchor(
+                   baseAnchorCandidates[index],
+                   platformHomeInverse,
+                   baseAnchorWorld)) {
+                importedGeometry.baseAnchors[index] =
+                    platformHomeInverse * baseAnchorWorld;
+                baseAnchorsFound[index] = true;
+            }
+
+            collision::Vec3 platformAnchorWorld = collision::Vec3::Zero();
+            if(baseAnchorsFound[index] &&
+                chooseFarthestAnchor(
+                    platformAnchorCandidates[index],
+                    baseAnchorWorld,
+                    platformAnchorWorld)) {
+                importedGeometry.platformAnchors[index] =
+                    platformHomeInverse * platformAnchorWorld;
+                platformAnchorsFound[index] = true;
+            }
+        }
+
+        for(RuntimeRobot& follower : robots) {
+            if(!follower.parallelFollowerEnabled ||
+                follower.documentId == platform.documentId ||
+                !sameStewartSource(platform, follower) ||
+                !follower.instance) {
+                continue;
+            }
+
+            const std::string upperLink = findFirstLinkContaining(
+                follower.model,
+                stewartUpperActuatorMarker());
+            if(upperLink.empty()) {
+                continue;
+            }
+
+            const int legIndex = actuatorLegIndexFromLinkName(upperLink);
+            if(legIndex < 0 || legIndex >= 6) {
+                continue;
+            }
+            const std::size_t index = static_cast<std::size_t>(legIndex);
+            if(!baseAnchorsFound[index] || !platformAnchorsFound[index]) {
+                continue;
+            }
+
+            std::string baseLink = findFirstLinkForLeg(
+                follower.model,
+                stewartLowerActuatorMarker(),
+                legIndex);
+            if(baseLink.empty()) {
+                baseLink = findFirstLinkForLeg(
+                    follower.model,
+                    stewartHookeMarker(),
+                    legIndex);
+            }
+
+            follower.parallelFollowerLegIndex = legIndex;
+            follower.parallelFollowerHomeTransform = follower.baseTransform;
+            follower.parallelFollowerHomeBaseAnchor = importedGeometry.baseAnchors[index];
+            follower.parallelFollowerHomePlatformAnchor = importedGeometry.platformAnchors[index];
+            follower.parallelFollowerAnchorsValid = true;
+            follower.parallelFollowerHomeLength =
+                (follower.parallelFollowerHomePlatformAnchor -
+                    follower.parallelFollowerHomeBaseAnchor).norm();
+            follower.parallelFollowerActuatorDofIndex =
+                findStewartFollowerActuatorDofIndex(follower, legIndex);
+            follower.parallelFollowerActuatorSign =
+                calibrateStewartFollowerActuatorSign(
+                    follower,
+                    follower.parallelFollowerActuatorDofIndex,
+                    baseLink,
+                    upperLink);
+            captureStewartFollowerDrivenLinks(follower, legIndex);
+            LOG_INFO("rs2026") << "Stewart follower configured: platform="
+                << platform.documentId
+                << ", follower=" << follower.documentId
+                << ", leg=" << (legIndex + 1)
+                << ", homeLength=" << follower.parallelFollowerHomeLength << " m"
+                << ", actuatorDof=" << follower.parallelFollowerActuatorDofIndex
+                << ", actuatorSign=" << follower.parallelFollowerActuatorSign
+                << ", drivenLinks=" << follower.parallelFollowerDrivenLinks.size();
+        }
+
+        const bool hasAllAnchors =
+            std::all_of(baseAnchorsFound.begin(), baseAnchorsFound.end(), [](bool found) {
+                return found;
+            }) &&
+            std::all_of(platformAnchorsFound.begin(), platformAnchorsFound.end(), [](bool found) {
+                return found;
+            });
+        if(!hasAllAnchors) {
+            LOG_WARNING("rs2026") << "Stewart imported geometry incomplete: robot="
+                << platform.documentId;
+            continue;
+        }
+
+        platform.parallelGeometry = importedGeometry;
+        std::string error;
+        if(!kine::StewartPlatformKinematics::computeActuatorLengths(
+               platform.parallelGeometry,
+               platform.parallelPose,
+               platform.parallelActuatorLengths,
+               &error)) {
+            LOG_WARNING("rs2026") << "Failed to initialize imported Stewart geometry: robot="
+                << platform.documentId << ", error=" << error;
+        } else {
+            platform.parallelActuatorHomeLengths = platform.parallelActuatorLengths;
+            configureStewartInternalActuatorDofs(platform);
+            captureStewartInternalPlatformVisuals(platform);
+            const auto lengthRange = std::minmax_element(
+                platform.parallelActuatorLengths.begin(),
+                platform.parallelActuatorLengths.end());
+            LOG_INFO("rs2026") << "Stewart imported actuator home length range: robot="
+                << platform.documentId
+                << ", min=" << *lengthRange.first << " m"
+                << ", max=" << *lengthRange.second << " m"
+                << ", internalPlatformLinks="
+                << platform.parallelInternalPlatformDrivenLinks.size();
+        }
+    }
+}
+
+void ProjectScene::Impl::syncAllStewartFollowers()
+{
+    for(const RuntimeRobot& platform : robots) {
+        syncStewartFollowers(platform);
+    }
+}
+
+void ProjectScene::Impl::setStewartPlatformBaseTransform(
+    RuntimeRobot& platform,
+    const collision::Transform3& baseTransform)
+{
+    if(!platform.parallelControlEnabled) {
+        platform.baseTransform = baseTransform;
+        ProjectRuntimeBuilder::updateRobotPose(platform);
+        return;
+    }
+
+    platform.parallelHomeBaseTransform = baseTransform;
+    platform.baseTransform = platform.parallelHomeBaseTransform;
+    solveStewartInternalLegControls(platform);
+    ProjectRuntimeBuilder::updateRobotPose(platform);
+    applyStewartInternalPlatformVisualOverrides(platform);
+    syncStewartFollowers(platform);
+    for(RuntimeRobot& follower : robots) {
+        if(follower.parallelFollowerEnabled && sameStewartSource(platform, follower)) {
+            follower.parallelFollowerHomeTransform = baseTransform;
+            follower.baseTransform = baseTransform;
+            ProjectRuntimeBuilder::updateRobotPose(follower);
+        }
+    }
+    applyStewartFollowerVisualOverrides(platform);
+}
+
+void ProjectScene::Impl::applyStewartInternalPlatformVisualOverrides(RuntimeRobot& platform)
+{
+    applyStewartInternalPlatformVisualOverride(platform);
+}
+
+void ProjectScene::Impl::applyStewartFollowerVisualOverrides(const RuntimeRobot& platform)
+{
+    if(!platform.parallelControlEnabled) {
+        return;
+    }
+
+    for(RuntimeRobot& follower : robots) {
+        if(!follower.parallelFollowerEnabled ||
+            follower.documentId == platform.documentId ||
+            !sameStewartSource(platform, follower)) {
+            continue;
+        }
+
+        applyStewartFollowerVisualOverride(platform, follower);
+    }
+}
+
+void ProjectScene::Impl::applyAllStewartFollowerVisualOverrides()
+{
+    for(RuntimeRobot& platform : robots) {
+        applyStewartInternalPlatformVisualOverrides(platform);
+        applyStewartFollowerVisualOverrides(platform);
+    }
+}
+
 void ProjectScene::Impl::buildProjectRobots()
 {
     const auto buildStart = std::chrono::steady_clock::now();
@@ -4211,13 +4539,21 @@ void ProjectScene::Impl::buildProjectRobots()
         runtime.runtimeId = runtimeId++;
         runtime.documentId = robotDesc.id;
         runtime.name = robotDesc.name;
+        runtime.sourceType = robotDesc.sourceType;
+        runtime.sourcePath = robotDesc.sourcePath;
+        runtime.sourceModelIndex = robotDesc.sourceModelIndex;
         runtime.baseTransform = ProjectRuntimeBuilder::makeTransform(robotDesc.baseTransform);
         runtime.collisionEnabled = robotDesc.collisionEnabled;
 
         const std::filesystem::path robotPath = simulation_project::AssetResolver::resolveProjectPath(
             ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument.assetSearchPaths),
             robotDesc.sourcePath);
-        runtime.model = ProjectRuntimeBuilder::loadSingleRobot(robotPath, robotDesc.sourceType);
+        runtime.model = ProjectRuntimeBuilder::loadSingleRobot(
+            robotPath,
+            robotDesc.sourceType,
+            robotDesc.sourceModelIndex);
+        configureParallelControlIfNeeded(runtime, robotDesc, runtime.model);
+        configureParallelFollowerIfNeeded(runtime, robotDesc, runtime.model);
         RobotCollisionOverrideApplier::apply(projectDocument, robotDesc, projectBasePath, runtime.model);
         runtime.instance = std::make_shared<robotinstance::RobotInstance>(runtime.model, robotDesc.id);
         runtime.instance->setBaseTransform(runtime.baseTransform);
@@ -4245,16 +4581,33 @@ void ProjectScene::Impl::buildProjectRobots()
                 << ", collisionObjects=" << (runtime.collisionInstance ? runtime.collisionInstance->objects().size() : 0);
         }
 
-        robotLinks.push_back(ProjectScene::RobotLinkGroup{
-            runtime.documentId,
-            runtime.name,
-            runtime.model.linkNames,
-            jointNames(runtime.model),
-            movableJointInfos(runtime.model) });
+        if(!runtime.parallelFollowerEnabled) {
+            robotLinks.push_back(ProjectScene::RobotLinkGroup{
+                runtime.documentId,
+                runtime.name,
+                runtime.model.linkNames,
+                runtime.parallelControlEnabled
+                    ? parallelControlJointNames()
+                    : jointNames(runtime.model),
+                runtime.parallelControlEnabled
+                    ? parallelControlJointInfos()
+                    : movableJointInfos(runtime.model) });
+        }
         LOG_DEBUG("rs2026") << "Project robot build: robot=" << runtime.documentId
             << ", links=" << runtime.model.linkNames.size()
             << ", elapsedMs=" << elapsedMilliseconds(robotStart);
     }
+    configureStewartGroups();
+    syncAllStewartFollowers();
+    for(RuntimeRobot& runtime : robots) {
+        if(runtime.parallelControlEnabled) {
+            solveStewartInternalLegControls(runtime);
+            ProjectRuntimeBuilder::updateRobotPose(runtime);
+        } else if(runtime.parallelFollowerEnabled) {
+            ProjectRuntimeBuilder::updateRobotPose(runtime);
+        }
+    }
+    applyAllStewartFollowerVisualOverrides();
     LOG_DEBUG("rs2026") << "Project robots build: count=" << robots.size()
         << ", elapsedMs=" << elapsedMilliseconds(buildStart);
 }
@@ -5370,176 +5723,6 @@ void ProjectScene::Impl::drawInteractionModeHints()
     }
 }
 
-void ProjectScene::Impl::rebuildCoatingTrajectoryPreviewModel()
-{
-    const auto previewBuildStart = std::chrono::steady_clock::now();
-    coatingTrajectoryPreviewDirty = false;
-    if(coatingTrajectoryPreview.empty()) {
-        if(coatingTrajectoryPreviewNode) {
-            coatingTrajectoryPreviewNode->setModel(nullptr);
-            coatingTrajectoryPreviewNode->setVisible(false);
-        }
-        return;
-    }
-    if(!coatingTrajectoryPreviewVisible) {
-        if(coatingTrajectoryPreviewNode) {
-            coatingTrajectoryPreviewNode->setVisible(false);
-        }
-        coatingTrajectoryPreview.clear();
-        return;
-    }
-
-    Eigen::Vector3d minimum(
-        coatingTrajectoryPreview.front().positionX,
-        coatingTrajectoryPreview.front().positionY,
-        coatingTrajectoryPreview.front().positionZ);
-    Eigen::Vector3d maximum = minimum;
-    for(const ProjectScene::CoatingTrajectoryPreviewPoint& point : coatingTrajectoryPreview) {
-        const Eigen::Vector3d position(point.positionX, point.positionY, point.positionZ);
-        minimum = minimum.cwiseMin(position);
-        maximum = maximum.cwiseMax(position);
-    }
-
-    const double extent = (maximum - minimum).norm();
-    const float directionLength = static_cast<float>(std::clamp(extent * 0.04, 0.02, 0.12));
-
-    std::vector<rendercore::Vertex> trajectoryVertices;
-    std::vector<rendercore::Vertex> pointVertices;
-    std::vector<rendercore::Vertex> directionVertices;
-    trajectoryVertices.reserve(coatingTrajectoryPreview.size() * 2);
-    pointVertices.reserve(coatingTrajectoryPreview.size());
-    directionVertices.reserve(coatingTrajectoryPreview.size() * 2);
-    constexpr std::size_t kDirectionArrowStride = 20;
-
-    const auto appendVertex = [](std::vector<rendercore::Vertex>& vertices,
-        const Eigen::Vector3f& position) {
-        // Geometry uploads the complete Vertex stride, so every attribute must
-        // have a deterministic value even for unlit line/point primitives.
-        rendercore::Vertex vertex{};
-        vertex.position[0] = position.x();
-        vertex.position[1] = position.y();
-        vertex.position[2] = position.z();
-        vertices.push_back(vertex);
-    };
-
-    for(std::size_t index = 0; index < coatingTrajectoryPreview.size(); ++index) {
-        const ProjectScene::CoatingTrajectoryPreviewPoint& point = coatingTrajectoryPreview[index];
-        const Eigen::Vector3f position(
-            static_cast<float>(point.positionX),
-            static_cast<float>(point.positionY),
-            static_cast<float>(point.positionZ));
-        if(index > 0 && !point.startsNewSegment) {
-            const ProjectScene::CoatingTrajectoryPreviewPoint& previous =
-                coatingTrajectoryPreview[index - 1];
-            appendVertex(trajectoryVertices, Eigen::Vector3f(
-                static_cast<float>(previous.positionX),
-                static_cast<float>(previous.positionY),
-                static_cast<float>(previous.positionZ)));
-            appendVertex(trajectoryVertices, position);
-        }
-        if(!point.sprayEnabled) {
-            continue;
-        }
-
-        appendVertex(pointVertices, position);
-        Eigen::Vector3f direction(
-            static_cast<float>(point.directionX),
-            static_cast<float>(point.directionY),
-            static_cast<float>(point.directionZ));
-        if(direction.squaredNorm() <= 1.0e-12f) {
-            continue;
-        }
-        direction.normalize();
-        const Eigen::Vector3f tip = position + direction * directionLength;
-        // Keep a direction line for every spray point. Arrow wings are only
-        // auxiliary visual markers; drawing them for all 55k points triples
-        // the upload and raster workload without adding information.
-        appendVertex(directionVertices, position);
-        appendVertex(directionVertices, tip);
-        if(index % kDirectionArrowStride == 0) {
-            const Eigen::Vector3f reference = std::abs(direction.z()) < 0.9f
-                ? Eigen::Vector3f::UnitZ()
-                : Eigen::Vector3f::UnitY();
-            const Eigen::Vector3f side = direction.cross(reference).normalized();
-            const Eigen::Vector3f wingBase = tip - direction * directionLength * 0.28f;
-            const float wingWidth = directionLength * 0.11f;
-            appendVertex(directionVertices, tip);
-            appendVertex(directionVertices, wingBase + side * wingWidth);
-            appendVertex(directionVertices, tip);
-            appendVertex(directionVertices, wingBase - side * wingWidth);
-        }
-    }
-
-    if(trajectoryVertices.empty() && pointVertices.empty() && directionVertices.empty()) {
-        if(coatingTrajectoryPreviewNode) {
-            coatingTrajectoryPreviewNode->setModel(nullptr);
-            coatingTrajectoryPreviewNode->setVisible(false);
-        }
-        coatingTrajectoryPreview.clear();
-        return;
-    }
-
-    const auto makeMaterial = [](const Eigen::Vector4f& color) {
-        auto material = std::make_shared<rendercore::Material>();
-        material->type = rendercore::MaterialType::Unlit;
-        material->baseColor = color;
-        return material;
-    };
-    const auto addGeometry = [](const std::shared_ptr<rendercore::Model>& model,
-        std::vector<rendercore::Vertex>&& vertices,
-        GLenum primitive,
-        const std::shared_ptr<rendercore::Material>& material) {
-        if(vertices.empty()) {
-            return;
-        }
-        std::vector<unsigned int> indices(vertices.size());
-        for(std::size_t index = 0; index < indices.size(); ++index) {
-            indices[index] = static_cast<unsigned int>(index);
-        }
-        rendercore::SubMesh subMesh;
-        subMesh.geometry = std::make_shared<rendercore::Geometry>(
-            vertices,
-            indices,
-            primitive);
-        subMesh.material = material;
-        model->addSubMesh(std::move(subMesh));
-    };
-
-    LOG_DEBUG("rs2026") << "Coating trajectory preview GPU upload: sourcePoints="
-        << coatingTrajectoryPreview.size()
-        << ", trajectoryVertices=" << trajectoryVertices.size()
-        << ", sprayPointVertices=" << pointVertices.size()
-        << ", directionVertices=" << directionVertices.size()
-        << ", elapsedMs="
-        << std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - previewBuildStart).count();
-    const std::shared_ptr<rendercore::Model> model = std::make_shared<rendercore::Model>();
-    addGeometry(model, std::move(trajectoryVertices), GL_LINES,
-        makeMaterial(Eigen::Vector4f(0.15f, 0.55f, 1.0f, 1.0f)));
-    addGeometry(model, std::move(pointVertices), GL_POINTS,
-        makeMaterial(Eigen::Vector4f(1.0f, 0.45f, 0.08f, 1.0f)));
-    addGeometry(model, std::move(directionVertices), GL_LINES,
-        makeMaterial(Eigen::Vector4f(0.15f, 0.9f, 0.35f, 1.0f)));
-    if(!model) {
-        LOG_WARNING("rs2026") << "Failed to build the coating trajectory preview model.";
-        if(coatingTrajectoryPreviewNode) {
-            coatingTrajectoryPreviewNode->setVisible(false);
-        }
-        coatingTrajectoryPreview.clear();
-        return;
-    }
-    if(!coatingTrajectoryPreviewNode) {
-        coatingTrajectoryPreviewNode = std::make_shared<VisibleModelNode>(model);
-        coatingTrajectoryPreviewNode->setName("coating_trajectory_preview");
-        sceneGraph.root()->addChild(coatingTrajectoryPreviewNode);
-        sceneGraph.registerNode(coatingTrajectoryPreviewNode);
-    } else {
-        coatingTrajectoryPreviewNode->setModel(model);
-    }
-    coatingTrajectoryPreviewNode->setVisible(coatingTrajectoryPreviewVisible);
-    coatingTrajectoryPreview.clear();
-}
-
 void ProjectScene::Impl::buildToolAssetPreview()
 {
     toolAssetPreview.mountToVisual = ProjectRuntimeBuilder::makeTransform(toolAssetPreview.asset.assetMountToVisual);
@@ -5619,44 +5802,6 @@ void ProjectScene::Impl::drawToolAssetPreviewFrames()
             scenecore::RenderLayer::Gizmo,
             scenecore::RenderCategory::Debug,
             scenecore::RenderFeature::Gizmo });
-}
-
-void ProjectScene::Impl::drawRotationCenterMarker()
-{
-    if(!rotationCenterMarkerVisible || !viewerCamera || height <= 0) {
-        return;
-    }
-
-    const float cameraDistance = std::max(
-        1.0e-5f,
-        (viewerCamera->position() - viewerCamera->target()).norm());
-    const float halfHeight = cameraDistance * std::tan(
-        kCameraVerticalFovDegrees * static_cast<float>(kPi) / 360.0f);
-    const float markerHalfSize = std::max(
-        1.0e-6f,
-        14.0f * (2.0f * halfHeight) / static_cast<float>(height));
-    const glm::vec3 center = math::eigenToGlm(rotationCenterMarkerPosition);
-    const glm::vec4 color(1.0f, 0.68f, 0.08f, 1.0f);
-    const scenecore::RenderTag tag{
-        scenecore::RenderLayer::Gizmo,
-        scenecore::RenderCategory::Debug,
-        scenecore::RenderFeature::Gizmo };
-    scenecore::DebugDraw& debug = renderer.debug();
-    debug.drawLine(
-        center - glm::vec3(markerHalfSize, 0.0f, 0.0f),
-        center + glm::vec3(markerHalfSize, 0.0f, 0.0f),
-        color,
-        tag);
-    debug.drawLine(
-        center - glm::vec3(0.0f, markerHalfSize, 0.0f),
-        center + glm::vec3(0.0f, markerHalfSize, 0.0f),
-        color,
-        tag);
-    debug.drawLine(
-        center - glm::vec3(0.0f, 0.0f, markerHalfSize),
-        center + glm::vec3(0.0f, 0.0f, markerHalfSize),
-        color,
-        tag);
 }
 
 void ProjectScene::Impl::applyActiveToolAttachmentVisibility()
@@ -5803,10 +5948,6 @@ void ProjectScene::setProjectDocument(
     const simulation_project::ProjectDocument& document,
     const std::filesystem::path& basePath)
 {
-    m_impl->rotationCenterMarkerVisible = false;
-    if(m_impl->viewerCamera) {
-        m_impl->viewerCamera->clearOrbitCenter();
-    }
     m_impl->hideObjectCollisionModelVariantPreviewMeshes();
     ++m_impl->objectCollisionVariantMeshPreviewRevision;
     m_impl->projectDocument = document;
@@ -5996,9 +6137,6 @@ void ProjectScene::resize(int width, int height)
 {
     m_impl->width = width > 0 ? width : 1;
     m_impl->height = height > 0 ? height : 1;
-    if(m_impl->sceneObjectHoverPass) {
-        m_impl->sceneObjectHoverPass->resize(m_impl->width, m_impl->height);
-    }
 }
 
 void ProjectScene::update(double timeSeconds)
@@ -6007,20 +6145,21 @@ void ProjectScene::update(double timeSeconds)
         return;
     }
 
-    if(m_impl->coatingTrajectoryPreviewDirty) {
-        m_impl->rebuildCoatingTrajectoryPreviewModel();
-    }
-    if(m_impl->coatingPredictionDebugDirty) {
-        m_impl->rebuildCoatingPredictionDebugModel();
-    }
     m_impl->updateCameraAnimation(timeSeconds);
     m_impl->renderer.setCurrentTime(static_cast<float>(timeSeconds));
 
     const auto poseStart = std::chrono::steady_clock::now();
     for(RuntimeRobot& robot : m_impl->robots) {
         ProjectRuntimeBuilder::applyAutoMotion(robot, timeSeconds);
+        if(robot.parallelControlEnabled && robot.autoMotionEnabled) {
+            solveStewartInternalLegControls(robot);
+        }
+    }
+    m_impl->syncAllStewartFollowers();
+    for(RuntimeRobot& robot : m_impl->robots) {
         ProjectRuntimeBuilder::updateRobotPose(robot);
     }
+    m_impl->applyAllStewartFollowerVisualOverrides();
     m_impl->syncProjectToolAttachments();
     m_impl->lastRobotPoseUpdateMs = elapsedMilliseconds(poseStart);
 
@@ -6148,8 +6287,7 @@ void ProjectScene::update(double timeSeconds)
 
     const std::string selectedRobotId = m_impl->selectionState.selectedRobotId();
     const std::string selectedLinkName = m_impl->selectionState.selectedLinkName();
-    const std::string selectedSceneObjectId =
-        m_impl->selectionState.selectedSceneObjectId();
+    const std::string selectedSceneObjectId = m_impl->selectionState.selectedSceneObjectId();
     const std::string selectedMountedAttachmentId = m_impl->selectionState.selectedMountedAttachmentId();
 
     for(const RuntimeRobot& robot : m_impl->robots) {
@@ -6160,10 +6298,7 @@ void ProjectScene::update(double timeSeconds)
             selectedRobotId == robot.documentId ? selectedLinkName : std::string());
     }
     updateRobotVisualHighlights(m_impl->robots, visualHighlightObjects);
-    updateSceneObjectHighlights(
-        m_impl->objects,
-        visualHighlightObjects,
-        selectedSceneObjectId);
+    updateSceneObjectHighlights(m_impl->objects, visualHighlightObjects, selectedSceneObjectId);
     updateToolAttachmentHighlights(
         m_impl->toolAttachments,
         m_impl->objects,
@@ -6312,7 +6447,6 @@ void ProjectScene::update(double timeSeconds)
     m_impl->drawObjectCollisionModelVariantPreview();
     m_impl->drawInteractionModeHints();
     m_impl->drawToolAssetPreviewFrames();
-    m_impl->drawCoatingPredictionDebug();
     m_impl->lastCollisionOverlayAuxFramesMs = elapsedMilliseconds(auxFramesStart);
     m_impl->lastCollisionOverlayMs = elapsedMilliseconds(overlayStart);
 }
@@ -6336,84 +6470,40 @@ void ProjectScene::render()
         m_impl->backgroundColor.z(),
         m_impl->backgroundColor.w());
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glPointSize(4.0f);
 
-    m_impl->drawRotationCenterMarker();
     m_impl->sceneGraph.update();
     m_impl->renderer.updateSceneUBO(m_impl->sceneGraph, m_impl->mainCameraNode.get());
-    if(m_impl->sceneObjectHoverPass) {
-        m_impl->sceneObjectHoverPass->setCameraMatrices(
-            math::eigenToGlm(camera->projection()),
-            math::eigenToGlm(camera->view()));
-        m_impl->sceneObjectHoverPass->setSelectedObjectId(
-            m_impl->selectionState.selectedSceneObjectId());
-    }
     m_impl->renderer.render(m_impl->sceneGraph);
 }
 
 void ProjectScene::onMouseMove(float dx, float dy, int button)
 {
-    if(!m_impl->viewerCamera) {
-        return;
-    }
-
-    m_impl->cameraAnimationActive = false;
-    if(button == 0) {
-        m_impl->viewerCamera->orbit(dx, dy);
-        m_impl->rotationCenterMarkerVisible =
-            m_impl->viewerCamera->hasOrbitCenter();
-    } else if(button == 1) {
-        m_impl->rotationCenterMarkerVisible = false;
-        m_impl->viewerCamera->pan(dx, dy, m_impl->height);
-    } else {
-        return;
-    }
-
-    m_impl->cameraLookAt.position = m_impl->viewerCamera->position();
-    m_impl->cameraLookAt.target = m_impl->viewerCamera->target();
-    m_impl->cameraLookAt.up = m_impl->viewerCamera->up();
-    m_impl->cameraLookAt.valid = true;
-}
-
-void ProjectScene::onScroll(float delta, int x, int y)
-{
-    if(!m_impl->viewerCamera) {
-        return;
-    }
-
-    m_impl->cameraAnimationActive = false;
-    m_impl->rotationCenterMarkerVisible = false;
-    Eigen::Vector3f anchor = m_impl->viewerCamera->target();
-    if(m_impl->viewerCamera->projectionMode() == ProjectSceneProjectionMode::Perspective) {
-        ProjectScenePickRay ray;
-        if(screenRayFromCamera(
-            m_impl->viewerCamera,
-            m_impl->width,
-            m_impl->height,
-            x,
-            y,
-            ray)) {
-            const Eigen::Vector3d planeNormal =
-                (m_impl->viewerCamera->target() - m_impl->viewerCamera->position())
-                    .cast<double>()
-                    .normalized();
-            const double denominator = ray.direction.dot(planeNormal);
-            if(std::abs(denominator) > 1.0e-9) {
-                const double distance =
-                    (m_impl->viewerCamera->target().cast<double>() - ray.origin)
-                        .dot(planeNormal) / denominator;
-                if(distance > 0.0 && std::isfinite(distance)) {
-                    anchor = (ray.origin + ray.direction * distance).cast<float>();
-                }
+    if(m_impl->controller) {
+        const Eigen::Vector3f previousPosition =
+            m_impl->mainCameraNode && m_impl->mainCameraNode->camera()
+                ? m_impl->mainCameraNode->camera()->position()
+                : Eigen::Vector3f::Zero();
+        m_impl->cameraAnimationActive = false;
+        m_impl->controller->onMouseMove(dx, dy, button);
+        if(m_impl->mainCameraNode && m_impl->mainCameraNode->camera() && m_impl->cameraLookAt.valid) {
+            const Eigen::Vector3f currentPosition = m_impl->mainCameraNode->camera()->position();
+            if(button == 1) {
+                m_impl->cameraLookAt.target += currentPosition - previousPosition;
             }
+            m_impl->cameraLookAt.position = currentPosition;
         }
     }
+}
 
-    m_impl->viewerCamera->zoomAt(delta, anchor);
-    m_impl->cameraLookAt.position = m_impl->viewerCamera->position();
-    m_impl->cameraLookAt.target = m_impl->viewerCamera->target();
-    m_impl->cameraLookAt.up = m_impl->viewerCamera->up();
-    m_impl->cameraLookAt.valid = true;
+void ProjectScene::onScroll(float delta)
+{
+    if(m_impl->controller) {
+        m_impl->cameraAnimationActive = false;
+        m_impl->controller->onScroll(delta);
+        if(m_impl->mainCameraNode && m_impl->mainCameraNode->camera() && m_impl->cameraLookAt.valid) {
+            m_impl->cameraLookAt.position = m_impl->mainCameraNode->camera()->position();
+        }
+    }
 }
 
 void ProjectScene::setCameraView(ProjectSceneCameraView view)
@@ -6423,184 +6513,7 @@ void ProjectScene::setCameraView(ProjectSceneCameraView view)
     }
 
     m_impl->cameraAnimationActive = false;
-    m_impl->rotationCenterMarkerVisible = false;
-    m_impl->viewerCamera->clearOrbitCenter();
-
-    if(m_impl->coatingAnalysisActive) {
-        const CameraSceneBounds bounds = m_impl->coatingSceneBounds();
-        if(bounds.valid) {
-            // Workpieces can be much smaller than the robot scene. Do not use
-            // the general scene fitting floors (0.5 / 2.5) here, otherwise a
-            // small target is placed far away and appears undersized.
-            m_impl->applyCameraLookAt(makeCameraLookAtState(
-                bounds,
-                view,
-                1.25,
-                1.0e-4,
-                1.0e-3));
-            return;
-        }
-    }
-
     m_impl->applyCameraLookAt(makeCameraLookAtState(m_impl->fullSceneBounds(), view, 1.25));
-}
-
-void ProjectScene::focusFullScene(double duration)
-{
-    if(!m_impl->initialized || !m_impl->viewerCamera) {
-        return;
-    }
-
-    const CameraSceneBounds bounds = m_impl->fullSceneBounds();
-    const CameraLookAtState state = makeCameraLookAtStateForCurrentCamera(
-        bounds,
-        m_impl->viewerCamera,
-        1.25);
-    m_impl->animateCameraTo(state, duration, false);
-}
-
-void ProjectScene::setProjectionMode(ProjectSceneProjectionMode mode)
-{
-    if(m_impl->viewerCamera) {
-        m_impl->viewerCamera->setProjectionMode(mode);
-    }
-}
-
-ProjectSceneProjectionMode ProjectScene::projectionMode() const
-{
-    return m_impl->viewerCamera
-        ? m_impl->viewerCamera->projectionMode()
-        : ProjectSceneProjectionMode::Perspective;
-}
-
-bool ProjectScene::setRotationCenterFromScreenPoint(int x, int y)
-{
-    const ProjectSceneTrianglePickResult result = pickTriangleScreenPoint(x, y);
-    if(!result.valid()) {
-        return false;
-    }
-
-    const bool changed = m_impl->setRotationCenter(result.nearestVertexPosition);
-    if(changed) {
-        LOG_DEBUG("rs2026") << "Rotation center set from mesh vertex: object="
-            << result.sceneObjectId
-            << ", vertex=" << result.nearestVertexPosition.transpose();
-    }
-    return changed;
-}
-
-std::size_t ProjectScene::setRotationCenterFromScreenRect(
-    int left,
-    int top,
-    int right,
-    int bottom)
-{
-    if(!m_impl->viewerCamera || m_impl->width <= 0 || m_impl->height <= 0) {
-        return 0;
-    }
-
-    const int minX = std::clamp(std::min(left, right), 0, m_impl->width - 1);
-    const int maxX = std::clamp(std::max(left, right), 0, m_impl->width - 1);
-    const int minY = std::clamp(std::min(top, bottom), 0, m_impl->height - 1);
-    const int maxY = std::clamp(std::max(top, bottom), 0, m_impl->height - 1);
-    if(minX >= maxX || minY >= maxY) {
-        return 0;
-    }
-
-    const glm::mat4 view = math::eigenToGlm(m_impl->viewerCamera->view());
-    const glm::mat4 projection = math::eigenToGlm(m_impl->viewerCamera->projection());
-    Eigen::Vector3d positionSum = Eigen::Vector3d::Zero();
-    std::size_t selectedVertexCount = 0;
-
-    for(const RuntimeSceneObject& runtimeObject : m_impl->objects) {
-        if(runtimeObject.objectType == "pointCloud" ||
-            runtimeObject.objectType == "toolAttachment" ||
-            !runtimeObject.visualNode ||
-            !runtimeObject.visualNode->isVisible()) {
-            continue;
-        }
-
-        const simulation_project::SceneObjectDesc* objectDesc =
-            findSceneObjectDesc(m_impl->projectDocument, runtimeObject.documentId);
-        if(objectDesc == nullptr || objectDesc->sourcePath.empty()) {
-            continue;
-        }
-
-        const std::filesystem::path sourcePath = simulation_project::AssetResolver::resolveProjectPath(
-            ProjectRuntimeBuilder::makeAssetResolveContext(
-                m_impl->projectBasePath,
-                m_impl->projectDocument.assetSearchPaths),
-            objectDesc->sourcePath);
-        std::string loadError;
-        const std::shared_ptr<assetcore::ModelDesc> model =
-            assetcore::AssetManager::instance().tryLoadModel(
-                pathToUtf8(sourcePath),
-                static_cast<float>(objectDesc->visualScale),
-                &loadError);
-        if(!model) {
-            continue;
-        }
-
-        const glm::mat4 world =
-            math::eigenToGlm(runtimeObject.transform) * runtimeObject.visualLocal;
-        const glm::mat4 viewWorld = view * world;
-        const glm::mat4 clipTransform = projection * viewWorld;
-        for(const assetcore::SubMeshDesc& subMesh : model->subMeshes()) {
-            for(const Eigen::Vector3f& position : subMesh.geometry.positions) {
-                const glm::vec4 local(position.x(), position.y(), position.z(), 1.0f);
-                const glm::vec4 viewPosition = viewWorld * local;
-                if(viewPosition.z >= 0.0f) {
-                    continue;
-                }
-
-                const glm::vec4 clip = clipTransform * local;
-                if(clip.w <= 1.0e-7f) {
-                    continue;
-                }
-                const float ndcX = clip.x / clip.w;
-                const float ndcY = clip.y / clip.w;
-                if(ndcX < -1.0f || ndcX > 1.0f || ndcY < -1.0f || ndcY > 1.0f) {
-                    continue;
-                }
-
-                const float screenX = (ndcX + 1.0f) * 0.5f * static_cast<float>(m_impl->width);
-                const float screenY = (1.0f - ndcY) * 0.5f * static_cast<float>(m_impl->height);
-                if(screenX < static_cast<float>(minX) ||
-                    screenX > static_cast<float>(maxX) ||
-                    screenY < static_cast<float>(minY) ||
-                    screenY > static_cast<float>(maxY)) {
-                    continue;
-                }
-
-                const glm::vec4 worldPosition = world * local;
-                positionSum += Eigen::Vector3d(
-                    static_cast<double>(worldPosition.x),
-                    static_cast<double>(worldPosition.y),
-                    static_cast<double>(worldPosition.z));
-                ++selectedVertexCount;
-            }
-        }
-    }
-
-    if(selectedVertexCount == 0) {
-        return 0;
-    }
-
-    const Eigen::Vector3d center = positionSum / static_cast<double>(selectedVertexCount);
-    if(!m_impl->setRotationCenter(center)) {
-        return 0;
-    }
-    LOG_DEBUG("rs2026") << "Rotation center set from screen rectangle: vertices="
-        << selectedVertexCount << ", center=" << center.transpose();
-    return selectedVertexCount;
-}
-
-void ProjectScene::setRotationCenterMarkerVisible(bool visible)
-{
-    m_impl->rotationCenterMarkerVisible =
-        visible &&
-        m_impl->viewerCamera &&
-        m_impl->viewerCamera->hasOrbitCenter();
 }
 
 void ProjectScene::focusMountFrameLink(const std::string& robotId, const std::string& linkName)
@@ -6681,11 +6594,6 @@ void ProjectScene::clearObjectFrameObjectFocus()
     m_impl->objectFrameFocusObjectId.clear();
     m_impl->applyMountFrameLinkFocusVisibility();
     m_impl->animateCameraTo(makeCameraLookAtState(m_impl->fullSceneBounds(), ProjectSceneCameraView::Home, 1.25), 0.55);
-}
-
-void ProjectScene::focusCoatingObject(const std::string& objectId, double duration)
-{
-    m_impl->focusCoatingObject(objectId, duration);
 }
 
 void ProjectScene::focusMountedAttachment(const std::string& attachmentId)
@@ -6860,9 +6768,6 @@ void ProjectScene::previewCollisionPairTargets(
 void ProjectScene::setInteractionMode(ProjectSceneInteractionMode mode)
 {
     m_impl->interactionMode = mode;
-    if(mode != ProjectSceneInteractionMode::Browse && m_impl->sceneObjectHoverPass) {
-        m_impl->sceneObjectHoverPass->clearHover();
-    }
 }
 
 ProjectSceneInteractionMode ProjectScene::interactionMode() const
@@ -6870,7 +6775,7 @@ ProjectSceneInteractionMode ProjectScene::interactionMode() const
     return m_impl->interactionMode;
 }
 
-ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseMesh) const
+ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
 {
     ProjectScenePickRay ray;
     if(!screenRayFromCamera(m_impl->mainCameraNode ? m_impl->mainCameraNode->camera() : nullptr,
@@ -6883,17 +6788,7 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
     }
 
     std::vector<ProjectScenePickCandidate> candidates;
-    const bool usePreciseScenePicking = preciseMesh &&
-        (m_impl->interactionMode == ProjectSceneInteractionMode::Browse ||
-            m_impl->interactionMode == ProjectSceneInteractionMode::SelectCollisionTarget);
-    const ProjectSceneTrianglePickResult preciseSceneHit = usePreciseScenePicking
-        ? pickTriangleScreenPoint(x, y)
-        : ProjectSceneTrianglePickResult();
     for(const RuntimeRobot& robot : m_impl->robots) {
-        if(!robot.visualBridge || !robot.visualBridge->rootNode() ||
-            !robot.visualBridge->rootNode()->visible()) {
-            continue;
-        }
         ProjectScenePickCandidate robotCandidate =
             makePointPickCandidate(
                 ProjectScenePickTargetKind::Robot,
@@ -6908,10 +6803,6 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
 
         for(const std::string& linkName : robot.model.linkNames) {
             if(robot.model.links.find(linkName) == robot.model.links.end()) {
-                continue;
-            }
-            const auto linkNode = robot.visualBridge->linkNode(linkName);
-            if(!linkNode || !linkNode->visible()) {
                 continue;
             }
 
@@ -6930,14 +6821,7 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
         const RuntimeRobot* robot = findRuntimeRobot(m_impl->robots, mount.robotId);
         if(robot == nullptr ||
             !robot->instance ||
-            !robot->visualBridge ||
-            !robot->visualBridge->rootNode() ||
-            !robot->visualBridge->rootNode()->visible() ||
             robot->model.links.find(mount.linkName) == robot->model.links.end()) {
-            continue;
-        }
-        const auto mountLinkNode = robot->visualBridge->linkNode(mount.linkName);
-        if(!mountLinkNode || !mountLinkNode->visible()) {
             continue;
         }
 
@@ -6956,8 +6840,7 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
     }
 
     for(const RuntimeToolAttachmentVisual& attachment : m_impl->toolAttachments) {
-        if(!attachment.visible || !attachment.visual.rootNode ||
-            !attachment.visual.rootNode->visible()) {
+        if(!attachment.visible) {
             continue;
         }
 
@@ -6993,9 +6876,6 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
         if(object.objectType == "toolAttachment" || object.objectType == "pointCloud") {
             continue;
         }
-        if(!object.visualNode || !object.visualNode->isVisible()) {
-            continue;
-        }
 
         ProjectScenePickCandidate objectCandidate =
             makePointPickCandidate(
@@ -7003,16 +6883,6 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
                 object.transform.translation(),
                 0.35);
         objectCandidate.sceneObjectId = object.documentId;
-
-        if(usePreciseScenePicking && object.pickModel) {
-            if(preciseSceneHit.valid() &&
-                preciseSceneHit.sceneObjectId == object.documentId) {
-                objectCandidate.hasPreciseHit = true;
-                objectCandidate.preciseRayDistance = preciseSceneHit.rayDistance;
-                candidates.push_back(std::move(objectCandidate));
-            }
-            continue;
-        }
 
         bool pushedAabb = false;
         if(object.collisionObject) {
@@ -7036,9 +6906,6 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
 
     for(const RuntimeSceneObject& pointCloud : m_impl->objects) {
         if(pointCloud.objectType != "pointCloud") {
-            continue;
-        }
-        if(!pointCloud.pointCloudNode || !pointCloud.pointCloudNode->visible()) {
             continue;
         }
 
@@ -7074,102 +6941,6 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y, bool preciseM
     }
 
     return ProjectScenePickingService::pick(ray, candidates, m_impl->interactionMode);
-}
-
-ProjectSceneTrianglePickResult ProjectScene::pickTriangleScreenPoint(int x, int y) const
-{
-    ProjectSceneTrianglePickResult best;
-    ProjectScenePickRay ray;
-    if(!screenRayFromCamera(m_impl->mainCameraNode ? m_impl->mainCameraNode->camera() : nullptr,
-        m_impl->width,
-        m_impl->height,
-        x,
-        y,
-        ray)) {
-        return best;
-    }
-
-    for(const RuntimeSceneObject& runtimeObject : m_impl->objects) {
-        if(runtimeObject.objectType == "pointCloud" ||
-            runtimeObject.objectType == "toolAttachment" ||
-            !runtimeObject.visualNode ||
-            !runtimeObject.visualNode->isVisible() ||
-            !runtimeObject.pickModel) {
-            continue;
-        }
-
-        std::size_t triangleIndex = 0;
-        for(const assetcore::SubMeshDesc& subMesh : runtimeObject.pickModel->subMeshes()) {
-            const assetcore::GeometryDesc& geometry = subMesh.geometry;
-            const std::size_t indexCount = geometry.indices.empty()
-                ? geometry.positions.size()
-                : geometry.indices.size();
-            for(std::size_t offset = 0; offset + 2 < indexCount; offset += 3) {
-                const std::uint32_t i0 = geometry.indices.empty()
-                    ? static_cast<std::uint32_t>(offset)
-                    : geometry.indices[offset];
-                const std::uint32_t i1 = geometry.indices.empty()
-                    ? static_cast<std::uint32_t>(offset + 1)
-                    : geometry.indices[offset + 1];
-                const std::uint32_t i2 = geometry.indices.empty()
-                    ? static_cast<std::uint32_t>(offset + 2)
-                    : geometry.indices[offset + 2];
-                if(i0 >= geometry.positions.size() ||
-                    i1 >= geometry.positions.size() ||
-                    i2 >= geometry.positions.size()) {
-                    continue;
-                }
-                const std::size_t currentTriangleIndex = triangleIndex++;
-
-                // The visual node is rendered with both the scene transform and
-                // the model-local transform. Picking must use the same world
-                // transform or screen hits will miss imported meshes whose
-                // loader supplied a non-identity local transform.
-                const Eigen::Vector3d a = runtimeObject.transform *
-                    transformSurfacePoint(runtimeObject.visualLocal, geometry.positions[i0].cast<double>());
-                const Eigen::Vector3d b = runtimeObject.transform *
-                    transformSurfacePoint(runtimeObject.visualLocal, geometry.positions[i1].cast<double>());
-                const Eigen::Vector3d c = runtimeObject.transform *
-                    transformSurfacePoint(runtimeObject.visualLocal, geometry.positions[i2].cast<double>());
-                double distance = 0.0;
-                double barycentricB = 0.0;
-                double barycentricC = 0.0;
-                if(!intersectRayTriangle(
-                    ray, a, b, c, distance, barycentricB, barycentricC) ||
-                    distance >= best.rayDistance && best.valid()) {
-                    continue;
-                }
-
-                const Eigen::Vector3d faceNormal = (b - a).cross(c - a);
-                if(faceNormal.squaredNorm() <= 1.0e-18) {
-                    continue;
-                }
-                best.sceneObjectId = runtimeObject.documentId;
-                best.triangleIndex = static_cast<std::uint32_t>(currentTriangleIndex);
-                best.hitPosition = ray.origin + ray.direction * distance;
-                best.nearestVertexPosition = a;
-                double nearestVertexDistance = (best.hitPosition - a).squaredNorm();
-                const double vertexBDistance = (best.hitPosition - b).squaredNorm();
-                if(vertexBDistance < nearestVertexDistance) {
-                    best.nearestVertexPosition = b;
-                    nearestVertexDistance = vertexBDistance;
-                }
-                if((best.hitPosition - c).squaredNorm() < nearestVertexDistance) {
-                    best.nearestVertexPosition = c;
-                }
-                best.normal = faceNormal.normalized();
-                best.rayDistance = distance;
-            }
-        }
-    }
-    if(best.valid()) {
-        LOG_DEBUG("rs2026") << "Triangle pick hit: object=" << best.sceneObjectId
-            << ", triangle=" << best.triangleIndex
-            << ", distance=" << best.rayDistance;
-    } else {
-        LOG_DEBUG("rs2026") << "Triangle pick missed all mesh scene objects.";
-    }
-    return best;
 }
 
 bool ProjectScene::applySurfaceScalarOverlay(
@@ -7222,70 +6993,10 @@ bool ProjectScene::applySurfaceScalarOverlay(
             return fail("The scalar field vertex count does not match the target mesh.");
         }
 
-        const bool hasSourceNormals =
-            geometry.normals.size() == geometry.positions.size() &&
-            std::all_of(geometry.normals.begin(), geometry.normals.end(),
-                [](const Eigen::Vector3f& normal) {
-                    return normal.squaredNorm() > 1.0e-12f;
-                });
-        if(!hasSourceNormals) {
-            geometry.normals.assign(geometry.positions.size(), Eigen::Vector3f::Zero());
-            const auto accumulateNormal = [&geometry](std::uint32_t indexA,
-                std::uint32_t indexB,
-                std::uint32_t indexC) {
-                if(indexA >= geometry.positions.size() || indexB >= geometry.positions.size() ||
-                    indexC >= geometry.positions.size()) {
-                    return;
-                }
-                const Eigen::Vector3f normal =
-                    (geometry.positions[indexB] - geometry.positions[indexA]).cross(
-                        geometry.positions[indexC] - geometry.positions[indexA]);
-                if(normal.squaredNorm() <= 1.0e-12f) {
-                    return;
-                }
-                geometry.normals[indexA] += normal;
-                geometry.normals[indexB] += normal;
-                geometry.normals[indexC] += normal;
-            };
-            if(!geometry.indices.empty()) {
-                for(std::size_t index = 0; index + 2 < geometry.indices.size(); index += 3) {
-                    accumulateNormal(
-                        geometry.indices[index],
-                        geometry.indices[index + 1],
-                        geometry.indices[index + 2]);
-                }
-            } else {
-                for(std::size_t index = 0; index + 2 < geometry.positions.size(); index += 3) {
-                    accumulateNormal(
-                        static_cast<std::uint32_t>(index),
-                        static_cast<std::uint32_t>(index + 1),
-                        static_cast<std::uint32_t>(index + 2));
-                }
-            }
-            for(Eigen::Vector3f& normal : geometry.normals) {
-                if(normal.squaredNorm() > 1.0e-12f) {
-                    normal.normalize();
-                } else {
-                    normal = Eigen::Vector3f::UnitZ();
-                }
-            }
-        }
-
-        std::vector<std::uint32_t> probeIndices = geometry.indices;
-        if(!geometry.indices.empty()) {
-            const std::size_t originalIndexCount = geometry.indices.size();
-            geometry.indices.reserve(originalIndexCount * 2);
-            for(std::size_t index = 0; index + 2 < originalIndexCount; index += 3) {
-                geometry.indices.push_back(geometry.indices[index]);
-                geometry.indices.push_back(geometry.indices[index + 2]);
-                geometry.indices.push_back(geometry.indices[index + 1]);
-            }
-        }
-
         geometry.colors.resize(values.size());
         RuntimeSurfaceScalarSubMesh runtimeSubMesh;
         runtimeSubMesh.positions.reserve(geometry.positions.size());
-        runtimeSubMesh.indices = std::move(probeIndices);
+        runtimeSubMesh.indices = geometry.indices;
         runtimeSubMesh.values = values;
         for(std::size_t vertexIndex = 0; vertexIndex < values.size(); ++vertexIndex) {
             geometry.colors[vertexIndex] = gammaToLinear(
@@ -7298,7 +7009,6 @@ bool ProjectScene::applySurfaceScalarOverlay(
                 runtimeSubMesh.indices.push_back(static_cast<std::uint32_t>(vertexIndex));
             }
         }
-        buildSurfaceScalarBvh(runtimeSubMesh);
         runtimeOverlay->subMeshes.push_back(std::move(runtimeSubMesh));
     }
 
@@ -7308,11 +7018,8 @@ bool ProjectScene::applySurfaceScalarOverlay(
         return fail("Failed to build the colored surface model.");
     }
     auto vertexColorMaterial = std::make_shared<rendercore::Material>();
-    vertexColorMaterial->type = rendercore::MaterialType::Phong;
+    vertexColorMaterial->type = rendercore::MaterialType::ScalarOverlay;
     vertexColorMaterial->baseColor = Eigen::Vector4f::Ones();
-    vertexColorMaterial->specular = Eigen::Vector3f::Constant(0.25f);
-    vertexColorMaterial->shininess = 20.0f;
-    vertexColorMaterial->emissiveColor = Eigen::Vector3f::Zero();
     for(unsigned int subMeshIndex = 0; subMeshIndex < overlayModel->subMeshCount(); ++subMeshIndex) {
         overlayModel->subMesh(subMeshIndex).material = vertexColorMaterial;
     }
@@ -7357,92 +7064,6 @@ bool ProjectScene::clearSurfaceScalarOverlay(const std::string& objectId)
     return true;
 }
 
-void ProjectScene::setCoatingTrajectoryPreview(
-    const std::vector<CoatingTrajectoryPreviewPoint>& points,
-    bool visible)
-{
-    m_impl->coatingTrajectoryPreview = points;
-    m_impl->coatingTrajectoryPreviewVisible = visible && !points.empty();
-    m_impl->coatingTrajectoryPreviewDirty = true;
-    if(m_impl->coatingTrajectoryPreviewNode && !visible) {
-        m_impl->coatingTrajectoryPreviewNode->setVisible(false);
-    }
-}
-
-bool ProjectScene::setCoatingTrajectoryPreviewVisible(bool visible)
-{
-    const bool hasCachedModel = m_impl->coatingTrajectoryPreviewNode &&
-        m_impl->coatingTrajectoryPreviewNode->model();
-    const bool hasPendingModel = m_impl->coatingTrajectoryPreviewDirty &&
-        !m_impl->coatingTrajectoryPreview.empty();
-    m_impl->coatingTrajectoryPreviewVisible = visible;
-    if(m_impl->coatingTrajectoryPreviewNode) {
-        m_impl->coatingTrajectoryPreviewNode->setVisible(visible && hasCachedModel);
-    }
-    return !visible || hasCachedModel || hasPendingModel;
-}
-
-void ProjectScene::setCoatingPredictionDebugState(
-    const CoatingPredictionDebugState& state)
-{
-    m_impl->coatingPredictionDebugState = state;
-    m_impl->coatingPredictionLocalColorDirty = true;
-    m_impl->coatingPredictionDebugDirty = true;
-}
-
-void ProjectScene::setCoatingPredictionDebugVisibility(
-    const CoatingPredictionDebugVisibility& visibility)
-{
-    m_impl->coatingPredictionDebugVisibility = visibility;
-    m_impl->coatingPredictionLocalColorDirty = true;
-}
-
-void ProjectScene::clearCoatingPredictionDebugState()
-{
-    m_impl->restoreCoatingPredictionLocalColors();
-    m_impl->coatingPredictionDebugState = CoatingPredictionDebugState();
-    m_impl->coatingPredictionLocalColorDirty = true;
-    m_impl->coatingPredictionDebugDirty = true;
-}
-
-bool ProjectScene::setCoatingModelVisible(const std::string& objectId, bool visible)
-{
-    RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
-    if(runtime == nullptr || !runtime->visualNode) {
-        return false;
-    }
-    m_impl->coatingModelVisibilityOverrides[objectId] = visible;
-    m_impl->applyMountFrameLinkFocusVisibility();
-    return true;
-}
-
-void ProjectScene::setCoatingModelVisibilities(
-    const std::unordered_map<std::string, bool>& visibility)
-{
-    m_impl->coatingModelVisibilityOverrides = visibility;
-    m_impl->applyMountFrameLinkFocusVisibility();
-}
-
-void ProjectScene::clearCoatingModelVisibility(const std::string& objectId)
-{
-    m_impl->coatingModelVisibilityOverrides.erase(objectId);
-    m_impl->applyMountFrameLinkFocusVisibility();
-}
-
-void ProjectScene::setCoatingAnalysisView(bool active)
-{
-    m_impl->coatingAnalysisActive = active;
-    if(active) {
-        // Selecting a workpiece in the analysis panel configures the target;
-        // it must not look like a viewport click before the user clicks it.
-        setSelectedSceneObject(std::string());
-    } else {
-        m_impl->restoreCoatingPredictionLocalColors();
-        m_impl->coatingPredictionLocalColorDirty = false;
-    }
-    m_impl->applyMountFrameLinkFocusVisibility();
-}
-
 smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScalarAtScreenPoint(
     const std::string& objectId,
     int x,
@@ -7468,49 +7089,39 @@ smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScala
 
     const glm::mat4 worldTransform =
         math::eigenToGlm(runtime->transform) * runtime->visualLocal;
-    const glm::mat4 localFromWorld = glm::inverse(worldTransform);
-    const glm::vec4 localOrigin = localFromWorld * glm::vec4(
-        static_cast<float>(ray.origin.x()),
-        static_cast<float>(ray.origin.y()),
-        static_cast<float>(ray.origin.z()),
-        1.0f);
-    const glm::vec4 localDirection = localFromWorld * glm::vec4(
-        static_cast<float>(ray.direction.x()),
-        static_cast<float>(ray.direction.y()),
-        static_cast<float>(ray.direction.z()),
-        0.0f);
-    ProjectScenePickRay localRay;
-    localRay.origin = Eigen::Vector3d(localOrigin.x, localOrigin.y, localOrigin.z);
-    localRay.direction = Eigen::Vector3d(
-        localDirection.x,
-        localDirection.y,
-        localDirection.z);
-    if(localRay.direction.squaredNorm() <= 1.0e-18) {
-        return result;
-    }
-
     double nearestDistance = std::numeric_limits<double>::max();
-    const RuntimeSurfaceScalarSubMesh* nearestSubMesh = nullptr;
-    std::uint32_t nearestVertex = 0;
     for(const RuntimeSurfaceScalarSubMesh& subMesh : runtime->surfaceScalarOverlay->subMeshes) {
-        std::uint32_t candidateVertex = 0;
-        if(findSurfaceScalarVertex(
-            subMesh,
-            localRay,
-            nearestDistance,
-            candidateVertex)) {
-            nearestSubMesh = &subMesh;
-            nearestVertex = candidateVertex;
+        for(std::size_t index = 0; index + 2 < subMesh.indices.size(); index += 3) {
+            const std::uint32_t indexA = subMesh.indices[index];
+            const std::uint32_t indexB = subMesh.indices[index + 1];
+            const std::uint32_t indexC = subMesh.indices[index + 2];
+            if(indexA >= subMesh.positions.size() || indexB >= subMesh.positions.size() ||
+                indexC >= subMesh.positions.size() || indexA >= subMesh.values.size() ||
+                indexB >= subMesh.values.size() || indexC >= subMesh.values.size()) {
+                continue;
+            }
+
+            const Eigen::Vector3d a = transformSurfacePoint(worldTransform, subMesh.positions[indexA]);
+            const Eigen::Vector3d b = transformSurfacePoint(worldTransform, subMesh.positions[indexB]);
+            const Eigen::Vector3d c = transformSurfacePoint(worldTransform, subMesh.positions[indexC]);
+            double distance = 0.0;
+            double barycentricB = 0.0;
+            double barycentricC = 0.0;
+            if(!intersectRayTriangle(
+                ray, a, b, c, distance, barycentricB, barycentricC) ||
+                distance >= nearestDistance) {
+                continue;
+            }
+
+            nearestDistance = distance;
+            const double barycentricA = 1.0 - barycentricB - barycentricC;
+            result.hit = true;
+            result.objectId = objectId;
+            result.value = barycentricA * subMesh.values[indexA] +
+                barycentricB * subMesh.values[indexB] +
+                barycentricC * subMesh.values[indexC];
+            result.worldPosition = ray.origin + ray.direction * distance;
         }
-    }
-    if(nearestSubMesh != nullptr && nearestVertex < nearestSubMesh->positions.size() &&
-        nearestVertex < nearestSubMesh->values.size()) {
-        result.hit = true;
-        result.objectId = objectId;
-        result.value = nearestSubMesh->values[nearestVertex];
-        result.worldPosition = transformSurfacePoint(
-            worldTransform,
-            nearestSubMesh->positions[nearestVertex]);
     }
     return result;
 }
@@ -7721,27 +7332,6 @@ void ProjectScene::setSelectedSceneObject(const std::string& objectId)
     m_impl->selectionState.selectSceneObject(objectId);
 }
 
-void ProjectScene::requestSceneObjectHover(int x, int y)
-{
-    if(m_impl->sceneObjectHoverPass) {
-        m_impl->sceneObjectHoverPass->requestPick(x, y);
-    }
-}
-
-void ProjectScene::clearSceneObjectHover()
-{
-    if(m_impl->sceneObjectHoverPass) {
-        m_impl->sceneObjectHoverPass->clearHover();
-    }
-}
-
-std::string ProjectScene::hoveredSceneObjectId() const
-{
-    return m_impl->sceneObjectHoverPass
-        ? m_impl->sceneObjectHoverPass->hoveredObjectId()
-        : std::string();
-}
-
 void ProjectScene::setSelectedObjectFrame(
     const std::string& objectId,
     const std::string& frameId)
@@ -7889,8 +7479,13 @@ bool ProjectScene::setRobotBaseTransform(
         return false;
     }
 
-    robot->baseTransform = ProjectRuntimeBuilder::makeTransform(transform);
-    ProjectRuntimeBuilder::updateRobotPose(*robot);
+    const collision::Transform3 baseTransform = ProjectRuntimeBuilder::makeTransform(transform);
+    if(robot->parallelControlEnabled) {
+        m_impl->setStewartPlatformBaseTransform(*robot, baseTransform);
+    } else {
+        robot->baseTransform = baseTransform;
+        ProjectRuntimeBuilder::updateRobotPose(*robot);
+    }
     m_impl->syncProjectToolAttachments();
     return true;
 }
@@ -7905,7 +7500,18 @@ bool ProjectScene::setRobotJointValue(
         return false;
     }
 
+    m_impl->syncStewartFollowers(*robot);
+    if(robot->parallelControlEnabled) {
+        solveStewartInternalLegControls(*robot);
+    }
     ProjectRuntimeBuilder::updateRobotPose(*robot);
+    m_impl->applyStewartInternalPlatformVisualOverrides(*robot);
+    for(RuntimeRobot& follower : m_impl->robots) {
+        if(follower.parallelFollowerEnabled && sameStewartSource(*robot, follower)) {
+            ProjectRuntimeBuilder::updateRobotPose(follower);
+        }
+    }
+    m_impl->applyStewartFollowerVisualOverrides(*robot);
     m_impl->syncProjectToolAttachments();
     return true;
 }

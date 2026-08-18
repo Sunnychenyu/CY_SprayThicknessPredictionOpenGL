@@ -159,10 +159,7 @@ ProjectScenePickResult ProjectScenePickingService::pick(
 
         bool hit = false;
         double rayDistance = 0.0;
-        if(candidate.hasPreciseHit) {
-            hit = candidate.preciseRayDistance >= 0.0;
-            rayDistance = candidate.preciseRayDistance;
-        } else if(candidate.hasAabb) {
+        if(candidate.hasAabb) {
             hit = rayAabbDistance(ray, candidate.aabbMin, candidate.aabbMax, rayDistance);
         }
         if(!hit) {
@@ -173,15 +170,8 @@ ProjectScenePickResult ProjectScenePickingService::pick(
         }
 
         const int priority = targetPriority(candidate.kind, mode);
-        const bool distanceFirst =
-            mode == ProjectSceneInteractionMode::Browse ||
-            mode == ProjectSceneInteractionMode::SelectCollisionTarget;
-        const bool isCloser = rayDistance < bestDistance;
-        const bool sameDepth = std::abs(rayDistance - bestDistance) <= 1.0e-6;
-        const bool shouldReplace = distanceFirst
-            ? (isCloser || (sameDepth && priority < bestPriority))
-            : (priority < bestPriority || (priority == bestPriority && isCloser));
-        if(shouldReplace) {
+        if(priority < bestPriority ||
+            (priority == bestPriority && rayDistance < bestDistance)) {
             best = makeResult(candidate, rayDistance);
             bestDistance = rayDistance;
             bestPriority = priority;

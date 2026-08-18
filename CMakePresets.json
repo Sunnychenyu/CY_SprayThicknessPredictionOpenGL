@@ -8,7 +8,7 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/windows-business-vs2019-x64",
       "cacheVariables": {
-        "USER_CHENYU_5080_Windows": "ON",
+        "USER_TANGTANG_4090_Windows": "ON",
         "RS2026_4090_ENABLE_DEMAND_LOADING": "ON",
         "BuildExample": "OFF",
         "BuildTests": "OFF",

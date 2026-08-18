@@ -40,6 +40,9 @@ namespace
         if(actionId == QStringLiteral("importObject")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/import_object.png");
         }
+        if(actionId == QStringLiteral("importPointCloud")) {
+            return QStringLiteral(":/RobotQtViewer/icons/ribbon/import_point_cloud.png");
+        }
         if(actionId == QStringLiteral("deleteSelectedItem")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/delete_selected.png");
         }
@@ -310,6 +313,7 @@ namespace robot_qt_viewer
         actionMap.insert(QStringLiteral("saveCollisionOverrides"), actions.saveCollisionOverrides);
         actionMap.insert(QStringLiteral("importRobot"), actions.importRobot);
         actionMap.insert(QStringLiteral("importObject"), actions.importObject);
+        actionMap.insert(QStringLiteral("importPointCloud"), actions.importPointCloud);
         actionMap.insert(QStringLiteral("deleteSelectedItem"), actions.deleteSelectedItem);
         actionMap.insert(QStringLiteral("saveImage"), actions.saveImage);
         actionMap.insert(QStringLiteral("resetCamera"), actions.resetCamera);

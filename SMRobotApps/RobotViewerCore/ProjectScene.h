@@ -1,10 +1,8 @@
 #pragma once
 
 #include <memory>
-#include <cstdint>
 #include <filesystem>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <SimulationProject/ProjectDocument.h>
@@ -19,7 +17,6 @@ struct RobotCollisionProxyRequest;
 struct RobotCollisionProxyQualitySummary;
 struct RobotCollisionRobotSummary;
 struct ProjectScenePickResult;
-struct ProjectSceneTrianglePickResult;
 
 enum class ProjectSceneInteractionMode
 {
@@ -30,8 +27,7 @@ enum class ProjectSceneInteractionMode
     SelectAttachment,
     EditTransformPreview,
     EditCollisionProxy,
-    SelectCollisionTarget,
-    SelectRotationSurface
+    SelectCollisionTarget
 };
 
 enum class ProjectSceneCameraView
@@ -46,79 +42,9 @@ enum class ProjectSceneCameraView
     Bottom
 };
 
-enum class ProjectSceneProjectionMode
-{
-    Perspective,
-    Orthographic
-};
-
 class ProjectScene
 {
 public:
-    struct CoatingTrajectoryPreviewPoint
-    {
-        double positionX = 0.0;
-        double positionY = 0.0;
-        double positionZ = 0.0;
-        double directionX = 1.0;
-        double directionY = 0.0;
-        double directionZ = 0.0;
-        bool sprayEnabled = false;
-        bool startsNewSegment = false;
-    };
-
-    struct CoatingPredictionDebugTriangle
-    {
-        double ax = 0.0;
-        double ay = 0.0;
-        double az = 0.0;
-        double bx = 0.0;
-        double by = 0.0;
-        double bz = 0.0;
-        double cx = 0.0;
-        double cy = 0.0;
-        double cz = 0.0;
-    };
-
-    struct CoatingPredictionDebugPoint
-    {
-        double positionX = 0.0;
-        double positionY = 0.0;
-        double positionZ = 0.0;
-        double directionX = 1.0;
-        double directionY = 0.0;
-        double directionZ = 0.0;
-    };
-
-    struct CoatingPredictionDebugState
-    {
-        bool visible = false;
-        std::string objectId;
-        std::vector<CoatingPredictionDebugTriangle> seedTriangles;
-        std::vector<CoatingPredictionDebugTriangle> cylindricalTriangles;
-        std::vector<CoatingPredictionDebugTriangle> localSectorTriangles;
-        std::vector<std::uint32_t> localSectorVertexIndices;
-        std::vector<CoatingPredictionDebugPoint> profileLinePoints;
-        std::vector<CoatingPredictionDebugPoint> selectedProfileLinePoints;
-        std::vector<CoatingPredictionDebugPoint> sprayPoints;
-        double axisOriginX = 0.0;
-        double axisOriginY = 0.0;
-        double axisOriginZ = 0.0;
-        double axisDirectionX = 0.0;
-        double axisDirectionY = 0.0;
-        double axisDirectionZ = 1.0;
-        double axisLength = 1.0;
-        double markerRadius = 0.002;
-    };
-
-    struct CoatingPredictionDebugVisibility
-    {
-        bool cylindricalSurface = true;
-        bool rotationAxis = true;
-        bool localSector = true;
-        bool sprayPoints = true;
-    };
-
     struct RobotJointInfo
     {
         std::string jointName;
@@ -280,19 +206,12 @@ public:
     void render();
 
     void onMouseMove(float dx, float dy, int button);
-    void onScroll(float delta, int x, int y);
+    void onScroll(float delta);
     void setCameraView(ProjectSceneCameraView view);
-    void focusFullScene(double duration = 0.3);
-    void setProjectionMode(ProjectSceneProjectionMode mode);
-    ProjectSceneProjectionMode projectionMode() const;
-    bool setRotationCenterFromScreenPoint(int x, int y);
-    std::size_t setRotationCenterFromScreenRect(int left, int top, int right, int bottom);
-    void setRotationCenterMarkerVisible(bool visible);
     void focusMountFrameLink(const std::string& robotId, const std::string& linkName);
     void clearMountFrameLinkFocus();
     void focusObjectFrameObject(const std::string& objectId);
     void clearObjectFrameObjectFocus();
-    void focusCoatingObject(const std::string& objectId, double duration = 0.3);
     void focusMountedAttachment(const std::string& attachmentId);
     void clearMountedAttachmentFocus();
     void previewObjectCollisionModelVariant(
@@ -310,28 +229,12 @@ public:
         const std::string& attachmentBId);
     void setInteractionMode(ProjectSceneInteractionMode mode);
     ProjectSceneInteractionMode interactionMode() const;
-    ProjectScenePickResult pickScreenPoint(int x, int y, bool preciseMesh = true) const;
-    ProjectSceneTrianglePickResult pickTriangleScreenPoint(int x, int y) const;
-    void requestSceneObjectHover(int x, int y);
-    void clearSceneObjectHover();
-    std::string hoveredSceneObjectId() const;
+    ProjectScenePickResult pickScreenPoint(int x, int y) const;
     bool applySurfaceScalarOverlay(
         const smrobot::visualization::SurfaceScalarOverlay& overlay,
         std::string* errorMessage = nullptr);
     bool setSurfaceScalarOverlayVisible(const std::string& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const std::string& objectId);
-    void setCoatingTrajectoryPreview(
-        const std::vector<CoatingTrajectoryPreviewPoint>& points,
-        bool visible);
-    bool setCoatingTrajectoryPreviewVisible(bool visible);
-    void setCoatingPredictionDebugState(const CoatingPredictionDebugState& state);
-    void setCoatingPredictionDebugVisibility(
-        const CoatingPredictionDebugVisibility& visibility);
-    void clearCoatingPredictionDebugState();
-    bool setCoatingModelVisible(const std::string& objectId, bool visible);
-    void setCoatingModelVisibilities(const std::unordered_map<std::string, bool>& visibility);
-    void clearCoatingModelVisibility(const std::string& objectId);
-    void setCoatingAnalysisView(bool active);
     smrobot::visualization::SurfaceScalarProbeResult probeSurfaceScalarAtScreenPoint(
         const std::string& objectId,
         int x,

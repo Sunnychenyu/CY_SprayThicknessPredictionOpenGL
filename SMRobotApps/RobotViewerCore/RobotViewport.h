@@ -8,17 +8,13 @@
 
 #include <QOpenGLWidget>
 #include <QPoint>
-#include <QRect>
 #include <QString>
 #include <QStringList>
 
 #include <cstddef>
-#include <cstdint>
 #include <chrono>
 #include <filesystem>
 #include <memory>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 class QMouseEvent;
@@ -26,7 +22,6 @@ class QEvent;
 class QKeyEvent;
 class QTimer;
 class QWheelEvent;
-class QRubberBand;
 namespace simulation_project
 {
     struct ProjectDocument;
@@ -68,7 +63,6 @@ public:
     void clearMountFrameLinkFocus();
     void focusObjectFrameObject(const QString& objectId);
     void clearObjectFrameObjectFocus();
-    void focusCoatingObject(const QString& objectId, double duration = 0.3);
     void focusMountedAttachment(const QString& attachmentId);
     void clearMountedAttachmentFocus();
     void previewObjectCollisionModelVariant(const QString& objectId, const QString& variantId);
@@ -215,31 +209,13 @@ public:
         const QString& linkName) const;
     void setCameraView(ProjectSceneCameraView view);
     void resetCamera();
-    void focusFullScene(double duration = 0.3);
-    void setProjectionMode(ProjectSceneProjectionMode mode);
-    ProjectSceneProjectionMode projectionMode() const;
     void setInteractionMode(ProjectSceneInteractionMode mode);
-    void beginRotationSurfacePick();
     ProjectSceneInteractionMode interactionMode() const;
     bool applySurfaceScalarOverlay(
         const smrobot::visualization::SurfaceScalarOverlay& overlay,
         QString* errorMessage = nullptr);
     bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const QString& objectId);
-    void setCoatingTrajectoryPreview(
-        const std::vector<ProjectScene::CoatingTrajectoryPreviewPoint>& points,
-        bool visible);
-    bool setCoatingTrajectoryPreviewVisible(bool visible);
-    void setCoatingPredictionDebugState(
-        const ProjectScene::CoatingPredictionDebugState& state);
-    void setCoatingPredictionDebugVisibility(
-        const ProjectScene::CoatingPredictionDebugVisibility& visibility);
-    void clearCoatingPredictionDebugState();
-    bool setCoatingModelVisible(const QString& objectId, bool visible);
-    void setCoatingModelVisibilities(const std::unordered_map<std::string, bool>& visibility);
-    void clearCoatingModelVisibility(const QString& objectId);
-    void setCoatingAnalysisView(bool active);
-    void setGpuPredictionBusy(bool busy);
     void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId = QString());
 
 signals:
@@ -254,6 +230,7 @@ signals:
         const QString& objectId,
         const QString& objectName);
     void robotStateUpdated();
+    void backgroundDoubleClicked();
     void scenePicked(
         const QString& kind,
         const QString& robotId,
@@ -261,22 +238,9 @@ signals:
         const QString& robotMountId,
         const QString& mountedAttachmentId,
         const QString& sceneObjectId);
-    void sceneSelectionCleared();
-    void rotationSurfacePicked(
-        const QString& objectId,
-        std::uint32_t triangleIndex,
-        double hitX,
-        double hitY,
-        double hitZ,
-        double normalX,
-        double normalY,
-        double normalZ);
     void surfaceScalarHovered(
         const QString& objectId,
         double value,
-        double worldX,
-        double worldY,
-        double worldZ,
         const QPoint& viewportPosition,
         bool hit);
 
@@ -286,6 +250,7 @@ protected:
     void paintGL() override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -296,12 +261,6 @@ private:
 
     bool initializeSceneWithCurrentContext(bool releaseContext);
     void publishRobotLinks();
-    void showViewportContextMenu(const QPoint& position);
-    void beginRotationCenterSelection();
-    void cancelRotationCenterSelection();
-    bool completeRotationCenterSelection(const QPoint& position);
-    bool completeRotationCenterSelection(const QRect& rectangle);
-    void updateSurfaceScalarProbe(const QPoint& position);
 
     int m_jointPreviewDegrees = 0;
     QString m_robotName;
@@ -312,20 +271,14 @@ private:
     simulation_project::ProjectDocument m_pendingProjectDocument;
     std::filesystem::path m_pendingProjectBasePath;
     QTimer* m_updateTimer = nullptr;
-    QRubberBand* m_rotationCenterRubberBand = nullptr;
     QPoint m_lastMousePos;
     QPoint m_mousePressPos;
-    QPoint m_rotationCenterPressPos;
     QString m_lastError;
     Clock::time_point m_startTime;
     ProjectSceneInteractionMode m_interactionMode = ProjectSceneInteractionMode::Browse;
     bool m_treePublished = false;
     bool m_hasPendingProjectDocument = false;
-    bool m_sceneUpdatePending = true;
     bool m_surfaceScalarProbeEnabled = false;
     QString m_surfaceScalarProbeObjectId;
-    bool m_coatingAnalysisViewActive = false;
-    bool m_gpuPredictionBusy = false;
-    bool m_rotationCenterSelectionActive = false;
-    bool m_rotationCenterDragActive = false;
+    Clock::time_point m_lastSurfaceScalarProbeTime;
 };

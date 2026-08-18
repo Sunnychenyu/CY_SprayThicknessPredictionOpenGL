@@ -9,6 +9,12 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#include "RobotQtViewerResource.h"
+
+#include <windows.h>
+#endif
+
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -86,6 +92,36 @@ namespace
                 : QStringLiteral("Startup Failed"),
             message);
     }
+
+#ifdef Q_OS_WIN
+    void applyWindowsTaskbarIcon(QWidget& window)
+    {
+        const HINSTANCE instance = GetModuleHandleW(nullptr);
+        const HWND handle = reinterpret_cast<HWND>(window.winId());
+        if(instance == nullptr || handle == nullptr) {
+            return;
+        }
+
+        const auto loadIcon = [instance](int width, int height) {
+            return static_cast<HICON>(LoadImageW(
+                instance,
+                MAKEINTRESOURCEW(IDI_ROBOT_QT_VIEWER),
+                IMAGE_ICON,
+                width,
+                height,
+                LR_DEFAULTCOLOR | LR_SHARED));
+        };
+
+        const HICON largeIcon = loadIcon(GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+        const HICON smallIcon = loadIcon(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        if(largeIcon != nullptr) {
+            SendMessageW(handle, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(largeIcon));
+        }
+        if(smallIcon != nullptr) {
+            SendMessageW(handle, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon));
+        }
+    }
+#endif
 }
 
 int main(int argc, char* argv[])
@@ -113,7 +149,11 @@ int main(int argc, char* argv[])
     try {
         MainWindow window;
         window.resize(1760, 920);
+        window.setWindowIcon(QApplication::windowIcon());
         window.show();
+#ifdef Q_OS_WIN
+        applyWindowsTaskbarIcon(window);
+#endif
         robot_qt_viewer::ThemeManager::applyNativeWindowFrame(
             window,
             robot_qt_viewer::ThemeManager::savedTheme());

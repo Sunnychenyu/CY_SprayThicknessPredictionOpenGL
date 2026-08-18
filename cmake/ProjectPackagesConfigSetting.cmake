@@ -6,7 +6,7 @@
 #   1. Get all package names
 ############################################################
 set( ExcludeBuildPackages
-    cmake data build out .git .idea Prune doc .cache .codex .planning
+    cmake data build .git .idea Prune doc .codex .planning
     PrebuiltPackages PackagesInstallation cmake_bk
     cmake_upgrade config include license thirdparty
     external archives archive

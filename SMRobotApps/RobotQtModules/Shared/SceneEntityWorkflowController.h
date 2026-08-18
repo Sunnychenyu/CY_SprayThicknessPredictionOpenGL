@@ -62,8 +62,7 @@ namespace robot_qt_viewer
             const std::string& sourceType);
         SceneEntityImportResult importSceneObjectFromPath(
             const std::filesystem::path& path,
-            const std::string& objectType,
-            double modelScale = 1.0);
+            const std::string& objectType);
         SceneEntityImportResult importPointCloudFromPath(
             const std::filesystem::path& path,
             const std::string& format);

@@ -4,7 +4,7 @@
 #include <Collision/CollisionShapeDesc.h>
 #include <Collision/RobotCollisionInstance.h>
 #include <Collision/RobotCollisionModel.h>
-#include <AssetCore/ModelDesc.h>
+#include <Kinematics/StewartPlatformKinematics.h>
 #include <RenderCore/Material.h>
 #include <RenderCore/Model.h>
 #include <RobotCore/RobotModel.h>
@@ -18,6 +18,7 @@
 #include <Eigen/Core>
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -38,11 +39,6 @@ public:
         m_visible = visible;
     }
 
-    bool isVisible() const
-    {
-        return m_visible;
-    }
-
     void collect(scenecore::RenderQueue& queue) override
     {
         if(m_visible) {
@@ -61,6 +57,19 @@ struct MeshOverlay
     std::string linkName;
 };
 
+struct StewartLegRuntimeControl
+{
+    bool enabled = false;
+    int legIndex = -1;
+    std::string lowerLink;
+    std::string upperLink;
+    std::array<int, 2> baseRevoluteDofIndices{ { -1, -1 } };
+    int actuatorDofIndex = -1;
+    double actuatorSign = 1.0;
+    double homeLength = 0.0;
+    collision::Vec3 platformAnchorLocalInUpperLink = collision::Vec3::Zero();
+};
+
 struct RuntimeRobot
 {
     uint64_t runtimeId = 0;
@@ -74,11 +83,38 @@ struct RuntimeRobot
     std::unordered_map<std::string, std::vector<std::shared_ptr<rendercore::Material>>> linkOriginalMaterials;
     std::unordered_set<std::string> highlightedLinks;
     std::string name;
+    std::string sourceType;
+    std::string sourcePath;
+    int sourceModelIndex = 0;
     collision::Transform3 baseTransform = collision::Transform3::Identity();
     bool collisionEnabled = true;
     bool autoMotionEnabled = false;
     double autoMotionAmplitude = 0.5;
     double autoMotionSpeed = 1.0;
+    bool parallelControlEnabled = false;
+    collision::Transform3 parallelHomeBaseTransform = collision::Transform3::Identity();
+    kine::StewartPlatformGeometry parallelGeometry;
+    kine::StewartPlatformPose parallelPose;
+    std::array<double, 6> parallelActuatorLengths{};
+    std::array<double, 6> parallelActuatorHomeLengths{};
+    std::array<double, 6> parallelActuatorRates{};
+    std::array<int, 6> parallelActuatorDofIndices{ { -1, -1, -1, -1, -1, -1 } };
+    std::array<double, 6> parallelActuatorSigns{ { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 } };
+    std::array<StewartLegRuntimeControl, 6> parallelLegControls;
+    bool parallelInternalPlatformVisualsEnabled = false;
+    std::vector<std::string> parallelInternalPlatformDrivenLinks;
+    std::unordered_map<std::string, collision::Transform3> parallelInternalPlatformHomeLocalTransforms;
+    bool parallelFollowerEnabled = false;
+    int parallelFollowerLegIndex = -1;
+    collision::Transform3 parallelFollowerHomeTransform = collision::Transform3::Identity();
+    bool parallelFollowerAnchorsValid = false;
+    collision::Vec3 parallelFollowerHomeBaseAnchor = collision::Vec3::Zero();
+    collision::Vec3 parallelFollowerHomePlatformAnchor = collision::Vec3::Zero();
+    int parallelFollowerActuatorDofIndex = -1;
+    double parallelFollowerActuatorSign = 1.0;
+    double parallelFollowerHomeLength = 0.0;
+    std::vector<std::string> parallelFollowerDrivenLinks;
+    std::unordered_map<std::string, collision::Transform3> parallelFollowerHomeLinkTransforms;
 };
 
 struct RuntimeSceneCollisionObject
@@ -90,21 +126,9 @@ struct RuntimeSceneCollisionObject
 
 struct RuntimeSurfaceScalarSubMesh
 {
-    struct BvhNode
-    {
-        Eigen::Vector3d minimum = Eigen::Vector3d::Zero();
-        Eigen::Vector3d maximum = Eigen::Vector3d::Zero();
-        std::int32_t leftChild = -1;
-        std::int32_t rightChild = -1;
-        std::uint32_t firstTriangle = 0;
-        std::uint32_t triangleCount = 0;
-    };
-
     std::vector<Eigen::Vector3d> positions;
     std::vector<uint32_t> indices;
     std::vector<double> values;
-    std::vector<std::uint32_t> triangleOrder;
-    std::vector<BvhNode> bvhNodes;
 };
 
 struct RuntimeSurfaceScalarOverlay
@@ -114,13 +138,6 @@ struct RuntimeSurfaceScalarOverlay
     std::shared_ptr<rendercore::Model> originalModel;
     std::shared_ptr<rendercore::Model> overlayModel;
     bool visible{ false };
-};
-
-enum class SceneObjectHighlightState
-{
-    None,
-    Selected,
-    Colliding
 };
 
 struct RuntimeSceneObject
@@ -134,17 +151,14 @@ struct RuntimeSceneObject
     std::shared_ptr<VisibleModelNode> visualNode;
     std::shared_ptr<scenecore::PointCloudNode> pointCloudNode;
     std::shared_ptr<rendercore::Model> visualModel;
-    // Reuse the loaded CPU mesh for precise screen picking.
-    std::shared_ptr<assetcore::ModelDesc> pickModel;
     std::vector<std::shared_ptr<rendercore::Material>> originalMaterials;
     std::shared_ptr<rendercore::Material> highlightMaterial;
-    std::shared_ptr<rendercore::Material> collisionHighlightMaterial;
     std::shared_ptr<RuntimeSurfaceScalarOverlay> surfaceScalarOverlay;
     collision::CollisionObjectPtr collisionObject;
     collision::CollisionShapeDesc collisionShape;
     std::vector<RuntimeSceneCollisionObject> collisionObjects;
     bool collisionEnabled = true;
-    SceneObjectHighlightState highlightState = SceneObjectHighlightState::None;
+    bool highlighted = false;
     float pointCloudBasePointSize = 2.0f;
     bool pointCloudBoundsValid = false;
     collision::Vec3 pointCloudLocalBoundsMin = collision::Vec3::Zero();

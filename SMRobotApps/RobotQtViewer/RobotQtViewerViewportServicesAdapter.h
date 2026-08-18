@@ -66,7 +66,6 @@ namespace robot_qt_viewer
         void clearMountFrameLinkFocus() override;
         void focusObjectFrameObject(const QString& objectId) override;
         void clearObjectFrameObjectFocus() override;
-        void focusCoatingObject(const QString& objectId, double duration) override;
         void focusMountedAttachment(const QString& attachmentId) override;
         void clearMountedAttachmentFocus() override;
         void previewObjectCollisionModelVariant(
@@ -165,22 +164,7 @@ namespace robot_qt_viewer
             QString* errorMessage) override;
         bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible) override;
         bool clearSurfaceScalarOverlay(const QString& objectId) override;
-        void setCoatingTrajectoryPreview(
-            const std::vector<CoatingTrajectoryPreviewPoint>& points,
-            bool visible) override;
-        bool setCoatingTrajectoryPreviewVisible(bool visible) override;
-        void setCoatingPredictionDebugState(
-            const CoatingPredictionDebugState& state) override;
-        void setCoatingPredictionDebugVisibility(
-            const CoatingPredictionDebugVisibility& visibility) override;
-        void clearCoatingPredictionDebugState() override;
-        bool setCoatingModelVisible(const QString& objectId, bool visible) override;
-        void setCoatingModelVisibilities(const QHash<QString, bool>& visibility) override;
-        void clearCoatingModelVisibility(const QString& objectId) override;
-        void setCoatingAnalysisView(bool active) override;
-        void setGpuPredictionBusy(bool busy) override;
         void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId) override;
-        void beginRotationSurfacePick() override;
 
         bool jointValue(
             const std::string& robotId,

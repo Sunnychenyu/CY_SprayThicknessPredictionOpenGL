@@ -3,9 +3,6 @@
 #include "ProjectScene.h"
 #include "RobotViewport.h"
 
-#include <string>
-#include <unordered_map>
-
 namespace
 {
     robot_qt_viewer::CollisionRuntimeDetectorInfo::Vec3Info toRuntimeVec3(
@@ -395,13 +392,6 @@ namespace robot_qt_viewer
         m_viewport.clearObjectFrameObjectFocus();
     }
 
-    void RobotQtViewerViewportServicesAdapter::focusCoatingObject(
-        const QString& objectId,
-        double duration)
-    {
-        m_viewport.focusCoatingObject(objectId, duration);
-    }
-
     void RobotQtViewerViewportServicesAdapter::focusMountedAttachment(const QString& attachmentId)
     {
         m_viewport.focusMountedAttachment(attachmentId);
@@ -678,191 +668,17 @@ namespace robot_qt_viewer
         return m_viewport.setSurfaceScalarOverlayVisible(objectId, visible);
     }
 
-bool RobotQtViewerViewportServicesAdapter::clearSurfaceScalarOverlay(const QString& objectId)
-{
-    return m_viewport.clearSurfaceScalarOverlay(objectId);
-}
-
-void RobotQtViewerViewportServicesAdapter::setCoatingTrajectoryPreview(
-    const std::vector<CoatingTrajectoryPreviewPoint>& points,
-    bool visible)
-{
-    std::vector<ProjectScene::CoatingTrajectoryPreviewPoint> viewportPoints;
-    viewportPoints.reserve(points.size());
-    for(const CoatingTrajectoryPreviewPoint& point : points) {
-        ProjectScene::CoatingTrajectoryPreviewPoint viewportPoint;
-        viewportPoint.positionX = point.positionX;
-        viewportPoint.positionY = point.positionY;
-        viewportPoint.positionZ = point.positionZ;
-        viewportPoint.directionX = point.directionX;
-        viewportPoint.directionY = point.directionY;
-        viewportPoint.directionZ = point.directionZ;
-        viewportPoint.sprayEnabled = point.sprayEnabled;
-        viewportPoint.startsNewSegment = point.startsNewSegment;
-        viewportPoints.push_back(viewportPoint);
+    bool RobotQtViewerViewportServicesAdapter::clearSurfaceScalarOverlay(const QString& objectId)
+    {
+        return m_viewport.clearSurfaceScalarOverlay(objectId);
     }
-    m_viewport.setCoatingTrajectoryPreview(viewportPoints, visible);
-}
 
-bool RobotQtViewerViewportServicesAdapter::setCoatingTrajectoryPreviewVisible(bool visible)
-{
-    return m_viewport.setCoatingTrajectoryPreviewVisible(visible);
-}
-
-void RobotQtViewerViewportServicesAdapter::setCoatingPredictionDebugState(
-    const CoatingPredictionDebugState& state)
-{
-    ProjectScene::CoatingPredictionDebugState viewportState;
-    viewportState.visible = state.visible;
-    viewportState.objectId = state.objectId.toStdString();
-    viewportState.axisOriginX = state.axisOriginX;
-    viewportState.axisOriginY = state.axisOriginY;
-    viewportState.axisOriginZ = state.axisOriginZ;
-    viewportState.axisDirectionX = state.axisDirectionX;
-    viewportState.axisDirectionY = state.axisDirectionY;
-    viewportState.axisDirectionZ = state.axisDirectionZ;
-    viewportState.axisLength = state.axisLength;
-    viewportState.markerRadius = state.markerRadius;
-    viewportState.seedTriangles.reserve(state.seedTriangles.size());
-    for(const CoatingPredictionDebugTriangle& source : state.seedTriangles) {
-        ProjectScene::CoatingPredictionDebugTriangle target;
-        target.ax = source.ax;
-        target.ay = source.ay;
-        target.az = source.az;
-        target.bx = source.bx;
-        target.by = source.by;
-        target.bz = source.bz;
-        target.cx = source.cx;
-        target.cy = source.cy;
-        target.cz = source.cz;
-        viewportState.seedTriangles.push_back(target);
-    }
-    viewportState.cylindricalTriangles.reserve(state.cylindricalTriangles.size());
-    for(const CoatingPredictionDebugTriangle& source : state.cylindricalTriangles) {
-        ProjectScene::CoatingPredictionDebugTriangle target;
-        target.ax = source.ax;
-        target.ay = source.ay;
-        target.az = source.az;
-        target.bx = source.bx;
-        target.by = source.by;
-        target.bz = source.bz;
-        target.cx = source.cx;
-        target.cy = source.cy;
-        target.cz = source.cz;
-        viewportState.cylindricalTriangles.push_back(target);
-    }
-    viewportState.localSectorTriangles.reserve(state.localSectorTriangles.size());
-    for(const CoatingPredictionDebugTriangle& source : state.localSectorTriangles) {
-        ProjectScene::CoatingPredictionDebugTriangle target;
-        target.ax = source.ax;
-        target.ay = source.ay;
-        target.az = source.az;
-        target.bx = source.bx;
-        target.by = source.by;
-        target.bz = source.bz;
-        target.cx = source.cx;
-        target.cy = source.cy;
-        target.cz = source.cz;
-        viewportState.localSectorTriangles.push_back(target);
-    }
-    viewportState.localSectorVertexIndices = state.localSectorVertexIndices;
-    viewportState.profileLinePoints.reserve(state.profileLinePoints.size());
-    for(const CoatingPredictionDebugPoint& source : state.profileLinePoints) {
-        ProjectScene::CoatingPredictionDebugPoint target;
-        target.positionX = source.positionX;
-        target.positionY = source.positionY;
-        target.positionZ = source.positionZ;
-        target.directionX = source.directionX;
-        target.directionY = source.directionY;
-        target.directionZ = source.directionZ;
-        viewportState.profileLinePoints.push_back(target);
-    }
-    viewportState.selectedProfileLinePoints.reserve(
-        state.selectedProfileLinePoints.size());
-    for(const CoatingPredictionDebugPoint& source : state.selectedProfileLinePoints) {
-        ProjectScene::CoatingPredictionDebugPoint target;
-        target.positionX = source.positionX;
-        target.positionY = source.positionY;
-        target.positionZ = source.positionZ;
-        target.directionX = source.directionX;
-        target.directionY = source.directionY;
-        target.directionZ = source.directionZ;
-        viewportState.selectedProfileLinePoints.push_back(target);
-    }
-    viewportState.sprayPoints.reserve(state.sprayPoints.size());
-    for(const CoatingPredictionDebugPoint& source : state.sprayPoints) {
-        ProjectScene::CoatingPredictionDebugPoint target;
-        target.positionX = source.positionX;
-        target.positionY = source.positionY;
-        target.positionZ = source.positionZ;
-        target.directionX = source.directionX;
-        target.directionY = source.directionY;
-        target.directionZ = source.directionZ;
-        viewportState.sprayPoints.push_back(target);
-    }
-    m_viewport.setCoatingPredictionDebugState(viewportState);
-}
-
-void RobotQtViewerViewportServicesAdapter::setCoatingPredictionDebugVisibility(
-    const CoatingPredictionDebugVisibility& visibility)
-{
-    ProjectScene::CoatingPredictionDebugVisibility viewportVisibility;
-    viewportVisibility.cylindricalSurface = visibility.cylindricalSurface;
-    viewportVisibility.rotationAxis = visibility.rotationAxis;
-    viewportVisibility.localSector = visibility.localSector;
-    viewportVisibility.sprayPoints = visibility.sprayPoints;
-    m_viewport.setCoatingPredictionDebugVisibility(viewportVisibility);
-}
-
-void RobotQtViewerViewportServicesAdapter::clearCoatingPredictionDebugState()
-{
-    m_viewport.clearCoatingPredictionDebugState();
-}
-
-bool RobotQtViewerViewportServicesAdapter::setCoatingModelVisible(
-    const QString& objectId,
-    bool visible)
-{
-    return m_viewport.setCoatingModelVisible(objectId, visible);
-}
-
-void RobotQtViewerViewportServicesAdapter::setCoatingModelVisibilities(
-    const QHash<QString, bool>& visibility)
-{
-    std::unordered_map<std::string, bool> converted;
-    converted.reserve(static_cast<std::size_t>(visibility.size()));
-    for(auto it = visibility.constBegin(); it != visibility.constEnd(); ++it) {
-        converted[it.key().toStdString()] = it.value();
-    }
-    m_viewport.setCoatingModelVisibilities(converted);
-}
-
-void RobotQtViewerViewportServicesAdapter::clearCoatingModelVisibility(const QString& objectId)
-{
-    m_viewport.clearCoatingModelVisibility(objectId);
-}
-
-void RobotQtViewerViewportServicesAdapter::setCoatingAnalysisView(bool active)
-{
-    m_viewport.setCoatingAnalysisView(active);
-}
-
-void RobotQtViewerViewportServicesAdapter::setGpuPredictionBusy(bool busy)
-{
-    m_viewport.setGpuPredictionBusy(busy);
-}
-
-void RobotQtViewerViewportServicesAdapter::setSurfaceScalarProbeEnabled(
+    void RobotQtViewerViewportServicesAdapter::setSurfaceScalarProbeEnabled(
         bool enabled,
         const QString& objectId)
     {
-    m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
-}
-
-void RobotQtViewerViewportServicesAdapter::beginRotationSurfacePick()
-{
-    m_viewport.beginRotationSurfacePick();
-}
+        m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
+    }
 
     bool RobotQtViewerViewportServicesAdapter::jointValue(
         const std::string& robotId,

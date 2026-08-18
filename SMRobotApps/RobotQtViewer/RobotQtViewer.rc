@@ -1,1 +1,3 @@
+#include "RobotQtViewerResource.h"
+
 IDI_ROBOT_QT_VIEWER ICON "resources/icons/app/robot_qt_viewer.ico"

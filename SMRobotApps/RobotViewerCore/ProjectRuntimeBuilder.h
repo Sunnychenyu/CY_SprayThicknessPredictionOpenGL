@@ -25,7 +25,8 @@ public:
 
     static robot::RobotModel loadSingleRobot(
         const std::filesystem::path& path,
-        const std::string& sourceType);
+        const std::string& sourceType,
+        int sourceModelIndex = 0);
 
     static void applyInitialJoints(
         robotinstance::RobotInstance& instance,

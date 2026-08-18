@@ -3,7 +3,6 @@
 #include <Eigen/Core>
 
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -45,7 +44,6 @@ namespace sprayworkpiece
         std::string name;
         std::string sourceMeshPath;
         std::vector<SurfaceSample> samples;
-        std::vector<std::uint32_t> triangleIndices;
         std::vector<SurfaceRegion> regions;
 
         bool empty() const;

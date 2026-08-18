@@ -19,6 +19,10 @@ cmake --preset windows-business-vs2019-x64 `
 cmake --build --preset windows-business-vs2019-x64-release
 ```
 
+KTX is a private static implementation dependency already contained in
+`SMRobotPlatform::RenderCore`. Do not install KTX and do not pass `Ktx_DIR`
+when building this Business Source package.
+
 User-facing SDK examples are under `tutorials/prebuilt`. Installed-package
 tutorials cover the prebuilt `Common`, `SMRobotCore`, and `SMRobotPlatform`
 libraries. Other source-delivered packages are copied in full, including their
@@ -27,5 +31,9 @@ module-owned regression tests, feature probes, diagnostics, and tutorials.
 Installed-package black-box checks remain in the producer repository under
 `tests/prebuilt_external_validation`; they are release gates, not package content.
 
-Runtime model data is external. Set `SMROBOT_DATA_ROOT` or pass explicit asset
-paths to the application and tutorials.
+Runtime model data is packaged under `data/` by default. `SMROBOT_DATA_ROOT`
+may still be used to override the data root for a larger or shared model library.
+
+The packaged `.LIC` file is prepared automatically during CMake configure and
+is also copied after application target builds to
+`<build>/<Config>/bin/license`. No manual license deployment is required.

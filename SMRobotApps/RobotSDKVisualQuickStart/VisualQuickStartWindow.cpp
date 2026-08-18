@@ -1,8 +1,8 @@
-﻿#include "VisualQuickStartWindow.h"
+#include "VisualQuickStartWindow.h"
 
 #include "RobotViewport.h"
 
-#include <data_path.h>
+#include <AssetCore/AssetRuntimePaths.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -154,7 +154,7 @@ VisualQuickStartWindow::~VisualQuickStartWindow() = default;
 
 std::filesystem::path VisualQuickStartWindow::projectRoot() const
 {
-    return std::filesystem::path(PROJECT_SOURCE_PATH);
+    return assetcore::AssetRuntimePaths::applicationRoot();
 }
 
 QString VisualQuickStartWindow::obstacleType() const
