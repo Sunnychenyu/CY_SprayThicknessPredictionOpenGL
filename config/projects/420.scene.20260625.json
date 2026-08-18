@@ -1,0 +1,172 @@
+{
+    "compat": {
+        "sourceVersion": 3,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [],
+            "attachments": [],
+            "mountFrames": []
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "",
+                            "type": "SceneAll"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [
+                        {
+                            "excludeLinks": [],
+                            "includeLinks": [],
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotId": "Red4600"
+                        }
+                    ],
+                    "type": "SceneAll"
+                }
+            ],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": []
+            },
+            "robotOverrides": [],
+            "selectionSets": []
+        },
+        "objects": [],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "Red4600",
+                "initialJoints": [],
+                "name": "Red4600",
+                "sourcePath": "data/Spray420/RedABB4600/urdf/Red4600.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColor": {
+                "a": 1.0,
+                "b": 0.08,
+                "g": 0.06,
+                "r": 0.05
+            },
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {},
+            "attachments": {},
+            "objects": {},
+            "pointClouds": {},
+            "robots": {
+                "Red4600": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

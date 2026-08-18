@@ -1,0 +1,41 @@
+# Local IDE and CMake user configuration
+CMakeUserPresets.json
+.vs/
+*.suo
+*.user
+*.opensdf
+
+# Generated build trees
+/build/
+/out/
+**/CMakeFiles/
+**/*.dir/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# Compiler and linker outputs
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.idb
+*.ipdb
+
+# Runtime and performance caches
+/.cache/
+/log/
+
+# Local temporary files
+*.tmp
+*.bak
+*.swp
+
+# Prebuilt SDK and third-party binaries are managed separately.
+/PrebuiltPackages/

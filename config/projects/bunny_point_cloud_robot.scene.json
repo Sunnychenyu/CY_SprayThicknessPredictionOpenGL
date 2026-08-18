@@ -1,0 +1,169 @@
+{
+    "version": 1,
+    "assetSearchPaths": [
+        "${PROJECT_DIR}",
+        "${DATA_DIR}",
+        "${ENV:SMROBOT_ASSET_DIR}"
+    ],
+    "robots": [
+        {
+            "id": "iiwa_1",
+            "name": "iiwa14",
+            "sourceType": "urdf",
+            "sourcePath": "data/drake_models/iiwa_description/urdf/iiwa14_spheres_dense_collision.urdf",
+            "baseTransform": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "initialJoints": [
+                { "jointName": "iiwa_joint_1", "value": 0.0 },
+                { "jointName": "iiwa_joint_2", "value": 0.55 },
+                { "jointName": "iiwa_joint_3", "value": 0.0 },
+                { "jointName": "iiwa_joint_4", "value": -1.1 },
+                { "jointName": "iiwa_joint_5", "value": 0.0 },
+                { "jointName": "iiwa_joint_6", "value": 0.95 },
+                { "jointName": "iiwa_joint_7", "value": 0.0 }
+            ],
+            "visible": true,
+            "collisionEnabled": true
+        }
+    ],
+    "objects": [],
+    "pointClouds": [
+        {
+            "id": "bunny_cloud",
+            "name": "Bunny PCD",
+            "sourcePath": "data/pcl/bunny.pcd",
+            "format": "pcd",
+            "sourceFrame": "world",
+            "scale": 3.0,
+            "transform": {
+                "x": 0.65,
+                "y": -0.25,
+                "z": 0.2,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "visualization": {
+                "visible": true,
+                "pointSize": 5.0,
+                "defaultColor": {
+                    "r": 0.2,
+                    "g": 0.9,
+                    "b": 0.85,
+                    "a": 1.0
+                },
+                "colorMode": "FieldOrDefault",
+                "maxRenderPoints": 0,
+                "voxelDownsampleSize": 0.0,
+                "lodEnabled": false,
+                "chunkSize": 0
+            },
+            "collision": {
+                "enabled": true,
+                "proxyType": "VoxelBoxes",
+                "voxelSize": 0.08,
+                "inflationMargin": 0.01,
+                "maxProxyBoxes": 5000,
+                "updateMode": "Static"
+            }
+        }
+    ],
+    "robotMounts": [],
+    "toolAssets": [],
+    "toolAttachments": [],
+    "tools": [],
+    "sensors": [],
+    "collision": {
+        "enabled": true,
+        "contacts": true,
+        "nearestPoints": true,
+        "normals": true,
+        "maxContacts": 64,
+        "pairs": [],
+        "robotObjectPairs": [
+            {
+                "robotId": "iiwa_1",
+                "objectId": "bunny_cloud",
+                "includeRobotLinks": [],
+                "enabled": true
+            }
+        ]
+    },
+    "collisionVisualization": {
+        "showCollisionGeometry": true,
+        "showContacts": true,
+        "showNormals": true,
+        "showNearestPoints": true,
+        "showObjectHighlight": true,
+        "alpha": 0.25,
+        "normalLength": 0.12,
+        "contactPointRadius": 0.025
+    },
+    "collisionDetectors": [
+        {
+            "id": "iiwa_bunny_collision",
+            "name": "IIWA vs Bunny Point Cloud",
+            "type": "RobotObject",
+            "enabled": true,
+            "targets": [
+                {
+                    "robotId": "iiwa_1",
+                    "includeLinks": [],
+                    "excludeLinks": []
+                },
+                {
+                    "objectId": "bunny_cloud"
+                }
+            ],
+            "pairGenerators": [],
+            "pairFilters": [],
+            "excludePairs": [],
+            "geometryRole": "PlanningProxy",
+            "contacts": true,
+            "nearestPoints": true,
+            "distance": true,
+            "maxContacts": 64,
+            "distanceThreshold": 0.0,
+            "visualization": {
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNormals": true,
+                "showNearestPoints": true,
+                "showObjectHighlight": true,
+                "alpha": 0.25,
+                "normalLength": 0.12,
+                "contactPointRadius": 0.025
+            }
+        }
+    ],
+    "robotCollisionOverrides": [],
+    "view": {
+        "camera": {
+            "target": {
+                "x": 0.3,
+                "y": 0.0,
+                "z": 0.6
+            },
+            "distance": 3.0,
+            "yaw": 0.0,
+            "pitch": -0.25,
+            "upAxis": "Z"
+        },
+        "backgroundColor": {
+            "r": 0.05,
+            "g": 0.06,
+            "b": 0.08,
+            "a": 1.0
+        },
+        "showGrid": true,
+        "showAxis": true,
+        "selectedRobot": "iiwa_1",
+        "selectedLink": "iiwa_link_ee"
+    }
+}

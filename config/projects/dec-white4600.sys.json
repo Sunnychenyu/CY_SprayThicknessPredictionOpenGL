@@ -1,0 +1,261 @@
+{
+    "compat": {
+        "sourceVersion": 3,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [],
+            "attachments": [],
+            "mountFrames": [
+                {
+                    "frameName": "Link6",
+                    "id": "White4600_Link6_mount",
+                    "mountType": "robot_mount",
+                    "name": "White4600_Link6_mount",
+                    "ownerFrameToMount": {
+                        "pitch": 0.0,
+                        "roll": 0.0,
+                        "x": 0.0,
+                        "y": 0.0,
+                        "yaw": 0.0,
+                        "z": 0.07
+                    },
+                    "ownerId": "White4600",
+                    "ownerType": "robot"
+                }
+            ]
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "",
+                            "type": "SceneAll"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [
+                        {
+                            "excludeLinks": [],
+                            "includeLinks": [],
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotId": "White4600"
+                        }
+                    ],
+                    "type": "SceneAll"
+                }
+            ],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": [
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "gun",
+                        "robotId": "White4600"
+                    },
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "burner",
+                        "robotId": "White4600"
+                    }
+                ]
+            },
+            "robotOverrides": [],
+            "selectionSets": []
+        },
+        "objects": [
+            {
+                "collisionEnabled": true,
+                "collisionScale": 1.0,
+                "id": "gun",
+                "name": "gun",
+                "objectFrames": [
+                    {
+                        "id": "gun_frame",
+                        "name": "gun_frame",
+                        "objectToFrame": {
+                            "pitch": 0.0,
+                            "roll": 0.0,
+                            "x": 0.09999999999999999,
+                            "y": 0.060000000000000005,
+                            "yaw": 0.0,
+                            "z": 0.0
+                        }
+                    }
+                ],
+                "objectType": "workpiece",
+                "sourcePath": "data/SprayDEC/gun.stl",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.6200000000000003,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "visible": true,
+                "visualScale": 1.0
+            },
+            {
+                "collisionEnabled": true,
+                "collisionScale": 1.0,
+                "id": "burner",
+                "name": "burner",
+                "objectFrames": [],
+                "objectType": "workpiece",
+                "sourcePath": "data/SprayDEC/burner.STL",
+                "transform": {
+                    "pitch": 1.5707963267948966,
+                    "roll": 0.0,
+                    "x": 1.43,
+                    "y": -0.08,
+                    "yaw": -0.24434609527920614,
+                    "z": 1.79
+                },
+                "visible": true,
+                "visualScale": 1.0
+            }
+        ],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "White4600",
+                "initialJoints": [],
+                "name": "White4600",
+                "sourcePath": "data/Spray420/WhiteABB4600/urdf/White4600.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColor": {
+                "a": 1.0,
+                "b": 0.08,
+                "g": 0.06,
+                "r": 0.05
+            },
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {},
+            "attachments": {},
+            "objects": {
+                "burner": {
+                    "visible": true
+                },
+                "gun": {
+                    "visible": true
+                }
+            },
+            "pointClouds": {},
+            "robots": {
+                "White4600": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

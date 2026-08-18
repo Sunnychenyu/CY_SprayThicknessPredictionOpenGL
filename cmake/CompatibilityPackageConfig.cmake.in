@@ -1,0 +1,69 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(_@NEW_PACKAGE@_legacy_package "@LEGACY_PACKAGE@")
+set(_@NEW_PACKAGE@_supported_components @SUPPORTED_COMPONENTS@)
+
+if(NOT @NEW_PACKAGE@_FIND_COMPONENTS)
+    set(@NEW_PACKAGE@_FIND_COMPONENTS ${_@NEW_PACKAGE@_supported_components})
+endif()
+
+set(_@NEW_PACKAGE@_legacy_components)
+foreach(_comp IN LISTS @NEW_PACKAGE@_FIND_COMPONENTS)
+    list(FIND _@NEW_PACKAGE@_supported_components ${_comp} _index)
+    if(_index EQUAL -1)
+        set(@NEW_PACKAGE@_${_comp}_FOUND FALSE)
+        if(@NEW_PACKAGE@_FIND_REQUIRED_${_comp})
+            set(@NEW_PACKAGE@_FOUND FALSE)
+            set(@NEW_PACKAGE@_NOT_FOUND_MESSAGE "Unsupported component: ${_comp}")
+        endif()
+        continue()
+    endif()
+
+    list(APPEND _@NEW_PACKAGE@_legacy_components ${_comp})
+endforeach()
+
+if(_@NEW_PACKAGE@_legacy_components)
+    list(REMOVE_DUPLICATES _@NEW_PACKAGE@_legacy_components)
+    find_dependency(${_@NEW_PACKAGE@_legacy_package} REQUIRED COMPONENTS ${_@NEW_PACKAGE@_legacy_components})
+else()
+    find_dependency(${_@NEW_PACKAGE@_legacy_package} REQUIRED)
+endif()
+
+foreach(_comp IN LISTS @NEW_PACKAGE@_FIND_COMPONENTS)
+    list(FIND _@NEW_PACKAGE@_supported_components ${_comp} _index)
+    if(_index EQUAL -1)
+        continue()
+    endif()
+
+    set(_legacy_target "${_@NEW_PACKAGE@_legacy_package}::${_comp}")
+    set(_new_target "@NEW_PACKAGE@::${_comp}")
+
+    if(TARGET ${_legacy_target})
+        if(NOT TARGET ${_new_target})
+            add_library(${_new_target} INTERFACE IMPORTED)
+            set_target_properties(${_new_target}
+                PROPERTIES
+                    INTERFACE_LINK_LIBRARIES ${_legacy_target}
+            )
+        endif()
+        set(@NEW_PACKAGE@_${_comp}_FOUND TRUE)
+    else()
+        set(@NEW_PACKAGE@_${_comp}_FOUND FALSE)
+        if(@NEW_PACKAGE@_FIND_REQUIRED_${_comp})
+            set(@NEW_PACKAGE@_FOUND FALSE)
+            set(@NEW_PACKAGE@_NOT_FOUND_MESSAGE
+                "Legacy target ${_legacy_target} was not found while resolving @NEW_PACKAGE@::${_comp}"
+            )
+        endif()
+    endif()
+endforeach()
+
+check_required_components(@NEW_PACKAGE@)
+
+unset(_@NEW_PACKAGE@_legacy_package)
+unset(_@NEW_PACKAGE@_supported_components)
+unset(_@NEW_PACKAGE@_legacy_components)
+unset(_legacy_target)
+unset(_new_target)

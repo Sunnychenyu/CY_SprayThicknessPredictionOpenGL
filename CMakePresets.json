@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-business-vs2019-x64",
+      "displayName": "RS2026 Windows Business Source (VS2019 x64)",
+      "generator": "Visual Studio 16 2019",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-business-vs2019-x64",
+      "cacheVariables": {
+        "USER_CHENYU_5080_Windows": "ON",
+        "RS2026_4090_ENABLE_DEMAND_LOADING": "ON",
+        "BuildExample": "OFF",
+        "BuildTests": "OFF",
+        "BuildRegression": "OFF",
+        "BuildFeatureProbes": "OFF",
+        "BuildDiagnostics": "OFF",
+        "BuildExternalValidation": "OFF",
+        "BuildTutorials": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-business-vs2019-x64-debug",
+      "configurePreset": "windows-business-vs2019-x64",
+      "configuration": "Debug",
+      "targets": ["RobotQtViewer"]
+    },
+    {
+      "name": "windows-business-vs2019-x64-release",
+      "configurePreset": "windows-business-vs2019-x64",
+      "configuration": "Release",
+      "targets": ["RobotQtViewer"]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+//  Define a path for finding shader program
+#cmakedefine SHADER_FILE_PATH_GEN1 "@SHADER_FILE_PATH_GEN1@"
+#cmakedefine SHADER_FILE_PATH_GEN2 "@SHADER_FILE_PATH_GEN2@"
+
+//  Define a path for finding source directory
+#cmakedefine PROJECT_SOURCE_PATH "@PROJECT_SOURCE_PATH@"
+
+//  Define a path for finding project source
+#cmakedefine SOURCE_FILE_PATH "@SOURCE_FILE_PATH@"
+
+//  Define a path for data directory
+#cmakedefine DATA_PATH "@DATA_PATH@"
+
+//  Define a path for model
+#cmakedefine DATA_MODEL_PATH "@DATA_MODEL_PATH@"
+
+//  Define a path for robot
+#cmakedefine DATA_ROBOT_PATH "@DATA_ROBOT_PATH@"
+
+//  Define a path for system
+#cmakedefine DATA_SYSTEM_PATH "@DATA_SYSTEM_PATH@"
+
+//  Define a path for PCL
+#cmakedefine DATA_PCL_PATH "@DATA_PCL_PATH@"
+
+
+

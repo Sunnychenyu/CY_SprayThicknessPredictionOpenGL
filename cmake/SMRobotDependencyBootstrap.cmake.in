@@ -1,0 +1,145 @@
+include_guard(GLOBAL)
+
+set(_SMROBOT_DEPENDENCY_BOOTSTRAP_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
+function(smrobot_dependency_bootstrap)
+    get_filename_component(_smrobot_sdk_prefix "${_SMROBOT_DEPENDENCY_BOOTSTRAP_DIR}/.." ABSOLUTE)
+    set(_smrobot_sdk_thirdparty_root "${_smrobot_sdk_prefix}/thirdparty")
+
+    file(GLOB _smrobot_installed_boost_config_dirs LIST_DIRECTORIES TRUE
+        "${_smrobot_sdk_thirdparty_root}/Boost/lib*/cmake/Boost-*"
+    )
+    file(GLOB _smrobot_installed_assimp_config_dirs LIST_DIRECTORIES TRUE
+        "${_smrobot_sdk_thirdparty_root}/assimp/lib/cmake/assimp-*"
+    )
+
+    set(_smrobot_prefix_candidates
+        "${_smrobot_sdk_thirdparty_root}/Qt5"
+        "${_smrobot_sdk_thirdparty_root}/Boost"
+        "${_smrobot_sdk_thirdparty_root}/assimp"
+        "${_smrobot_sdk_thirdparty_root}/Eigen340"
+        "${_smrobot_sdk_thirdparty_root}/glm"
+        "${_smrobot_sdk_thirdparty_root}/nlohmann_json"
+        "${_smrobot_sdk_thirdparty_root}/tinyxml2"
+        "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/fcl/CMake"
+        "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/libccd/lib/ccd"
+        "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/octomap/share/octomap"
+        "${_smrobot_sdk_thirdparty_root}/urdfdom_headers"
+        "${_smrobot_sdk_thirdparty_root}/urdfdom_headers/share/urdfdom_headers/cmake"
+        "${_smrobot_sdk_thirdparty_root}/urdfdom_install/lib/urdfdom/cmake"
+    )
+
+    set(_smrobot_external_fcl_roots)
+    if(DEFINED SMROBOT_EXTERNAL_FCL_ROOT AND NOT SMROBOT_EXTERNAL_FCL_ROOT STREQUAL "")
+        list(APPEND _smrobot_external_fcl_roots "${SMROBOT_EXTERNAL_FCL_ROOT}")
+    endif()
+    if(DEFINED ENV{SMROBOT_EXTERNAL_FCL_ROOT} AND NOT "$ENV{SMROBOT_EXTERNAL_FCL_ROOT}" STREQUAL "")
+        list(APPEND _smrobot_external_fcl_roots "$ENV{SMROBOT_EXTERNAL_FCL_ROOT}")
+    endif()
+
+    foreach(_smrobot_external_fcl_root IN LISTS _smrobot_external_fcl_roots)
+        list(APPEND _smrobot_prefix_candidates
+            "${_smrobot_external_fcl_root}"
+            "${_smrobot_external_fcl_root}/fcl/CMake"
+            "${_smrobot_external_fcl_root}/libccd/lib/ccd"
+            "${_smrobot_external_fcl_root}/octomap/share/octomap"
+        )
+    endforeach()
+
+    if(DEFINED SMROBOT_PREBUILT_THIRDPARTY_ROOT AND NOT SMROBOT_PREBUILT_THIRDPARTY_ROOT STREQUAL "")
+        list(APPEND _smrobot_external_roots "${SMROBOT_PREBUILT_THIRDPARTY_ROOT}")
+    endif()
+    if(DEFINED ENV{SMROBOT_PREBUILT_THIRDPARTY_ROOT} AND NOT "$ENV{SMROBOT_PREBUILT_THIRDPARTY_ROOT}" STREQUAL "")
+        list(APPEND _smrobot_external_roots "$ENV{SMROBOT_PREBUILT_THIRDPARTY_ROOT}")
+    endif()
+
+    foreach(_smrobot_external_root IN LISTS _smrobot_external_roots)
+        list(APPEND _smrobot_prefix_candidates
+            "${_smrobot_external_root}"
+            "${_smrobot_external_root}/vs_indep/Eigen340"
+            "${_smrobot_external_root}/vs_indep/glm"
+            "${_smrobot_external_root}/vs_indep/nlohmann_json"
+            "${_smrobot_external_root}/vs_indep/urdfdom_headers"
+            "${_smrobot_external_root}/vs_indep/Qt5155_x64"
+            "${_smrobot_external_root}/vs2019/boost_1_78_0"
+            "${_smrobot_external_root}/vs2019/assimp"
+            "${_smrobot_external_root}/vs2019/Assimp6.0.2"
+            "${_smrobot_external_root}/vs2019/fcl_static_x64/fcl/CMake"
+            "${_smrobot_external_root}/vs2019/fcl_static_x64/libccd/lib/ccd"
+            "${_smrobot_external_root}/vs2019/fcl_static_x64/octomap/share/octomap"
+            "${_smrobot_external_root}/vs2019/urdfdom_install/lib/urdfdom/cmake"
+        )
+    endforeach()
+
+    foreach(_smrobot_prefix IN LISTS _smrobot_prefix_candidates)
+        if(EXISTS "${_smrobot_prefix}")
+            list(PREPEND CMAKE_PREFIX_PATH "${_smrobot_prefix}")
+        endif()
+    endforeach()
+
+    set(_smrobot_dependency_dir_candidates
+        Qt5_DIR "${_smrobot_sdk_thirdparty_root}/Qt5/lib/cmake/Qt5"
+        Eigen3_DIR "${_smrobot_sdk_thirdparty_root}/Eigen340/share/eigen3/cmake"
+        glm_DIR "${_smrobot_sdk_thirdparty_root}/glm/lib/cmake/glm"
+        nlohmann_json_DIR "${_smrobot_sdk_thirdparty_root}/nlohmann_json/share/cmake/nlohmann_json"
+        fcl_DIR "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/fcl/CMake"
+        ccd_DIR "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/libccd/lib/ccd"
+        octomap_DIR "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/octomap/share/octomap"
+        dynamicEDT3D_DIR "${_smrobot_sdk_thirdparty_root}/fcl_static_x64/octomap/share/dynamicEDT3D"
+        urdfdom_headers_DIR "${_smrobot_sdk_thirdparty_root}/urdfdom_headers/CMake"
+        urdfdom_DIR "${_smrobot_sdk_thirdparty_root}/urdfdom_install/lib/urdfdom/cmake"
+    )
+
+    foreach(_smrobot_external_fcl_root IN LISTS _smrobot_external_fcl_roots)
+        list(APPEND _smrobot_dependency_dir_candidates
+            fcl_DIR "${_smrobot_external_fcl_root}/fcl/CMake"
+            ccd_DIR "${_smrobot_external_fcl_root}/libccd/lib/ccd"
+            octomap_DIR "${_smrobot_external_fcl_root}/octomap/share/octomap"
+            dynamicEDT3D_DIR "${_smrobot_external_fcl_root}/octomap/share/dynamicEDT3D"
+        )
+    endforeach()
+
+    foreach(_smrobot_installed_boost_config_dir IN LISTS _smrobot_installed_boost_config_dirs)
+        list(APPEND _smrobot_dependency_dir_candidates
+            Boost_DIR "${_smrobot_installed_boost_config_dir}"
+        )
+        break()
+    endforeach()
+    foreach(_smrobot_installed_assimp_config_dir IN LISTS _smrobot_installed_assimp_config_dirs)
+        list(APPEND _smrobot_dependency_dir_candidates
+            assimp_DIR "${_smrobot_installed_assimp_config_dir}"
+        )
+        break()
+    endforeach()
+
+    foreach(_smrobot_external_root IN LISTS _smrobot_external_roots)
+        list(APPEND _smrobot_dependency_dir_candidates
+            Qt5_DIR "${_smrobot_external_root}/vs_indep/Qt5155_x64/lib/cmake/Qt5"
+            Boost_DIR "${_smrobot_external_root}/vs2019/boost_1_78_0/lib64-msvc-14.2/cmake/Boost-1.78.0"
+            assimp_DIR "${_smrobot_external_root}/vs2019/assimp/lib/cmake/assimp-5.2"
+            assimp_DIR "${_smrobot_external_root}/vs2019/Assimp6.0.2/lib/cmake/assimp-6.0"
+            fcl_DIR "${_smrobot_external_root}/vs2019/fcl_static_x64/fcl/CMake"
+            ccd_DIR "${_smrobot_external_root}/vs2019/fcl_static_x64/libccd/lib/ccd"
+            octomap_DIR "${_smrobot_external_root}/vs2019/fcl_static_x64/octomap/share/octomap"
+            dynamicEDT3D_DIR "${_smrobot_external_root}/vs2019/fcl_static_x64/octomap/share/dynamicEDT3D"
+            urdfdom_headers_DIR "${_smrobot_external_root}/vs_indep/urdfdom_headers/CMake"
+            urdfdom_DIR "${_smrobot_external_root}/vs2019/urdfdom_install/lib/urdfdom/cmake"
+        )
+    endforeach()
+
+    list(LENGTH _smrobot_dependency_dir_candidates _smrobot_dependency_dir_candidate_count)
+    math(EXPR _smrobot_dependency_dir_candidate_last "${_smrobot_dependency_dir_candidate_count} - 1")
+    foreach(_smrobot_dependency_dir_candidate_index RANGE 0 ${_smrobot_dependency_dir_candidate_last} 2)
+        math(EXPR _smrobot_dependency_dir_candidate_path_index "${_smrobot_dependency_dir_candidate_index} + 1")
+        list(GET _smrobot_dependency_dir_candidates ${_smrobot_dependency_dir_candidate_index} _smrobot_dependency_dir_var)
+        list(GET _smrobot_dependency_dir_candidates ${_smrobot_dependency_dir_candidate_path_index} _smrobot_dependency_dir_path)
+        if(EXISTS "${_smrobot_dependency_dir_path}")
+            if(NOT DEFINED ${_smrobot_dependency_dir_var}
+               OR "${${_smrobot_dependency_dir_var}}" MATCHES "-NOTFOUND$")
+                set(${_smrobot_dependency_dir_var} "${_smrobot_dependency_dir_path}" CACHE PATH "SMRobot SDK dependency path for ${_smrobot_dependency_dir_var}." FORCE)
+            endif()
+        endif()
+    endforeach()
+
+    set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
+endfunction()

@@ -1,0 +1,32 @@
+<RCC>
+    <qresource prefix="/RobotQtViewer">
+        <file alias="icons/app/robot_qt_viewer.png">resources/icons/app/robot_qt_viewer.png</file>
+        <file alias="icons/ribbon/generated_sheet.png">resources/icons/ribbon/generated_sheet.png</file>
+        <file alias="icons/ribbon/new_project.png">resources/icons/ribbon/new_project.png</file>
+        <file alias="icons/ribbon/open_project.png">resources/icons/ribbon/open_project.png</file>
+        <file alias="icons/ribbon/save_project.png">resources/icons/ribbon/save_project.png</file>
+        <file alias="icons/ribbon/save_collision_overrides.png">resources/icons/ribbon/save_collision_overrides.png</file>
+        <file alias="icons/ribbon/import_robot.png">resources/icons/ribbon/import_robot.png</file>
+        <file alias="icons/ribbon/import_object.png">resources/icons/ribbon/import_object.png</file>
+        <file alias="icons/ribbon/delete_selected.png">resources/icons/ribbon/delete_selected.png</file>
+        <file alias="icons/ribbon/save_image.png">resources/icons/ribbon/save_image.png</file>
+        <file alias="icons/ribbon/reset_camera.png">resources/icons/ribbon/reset_camera.png</file>
+        <file alias="icons/ribbon/camera_view_home.png">resources/icons/ribbon/camera_view_home.png</file>
+        <file alias="icons/ribbon/camera_view_isometric.png">resources/icons/ribbon/camera_view_isometric.png</file>
+        <file alias="icons/ribbon/camera_view_front.png">resources/icons/ribbon/camera_view_front.png</file>
+        <file alias="icons/ribbon/camera_view_back.png">resources/icons/ribbon/camera_view_back.png</file>
+        <file alias="icons/ribbon/camera_view_left.png">resources/icons/ribbon/camera_view_left.png</file>
+        <file alias="icons/ribbon/camera_view_right.png">resources/icons/ribbon/camera_view_right.png</file>
+        <file alias="icons/ribbon/camera_view_top.png">resources/icons/ribbon/camera_view_top.png</file>
+        <file alias="icons/ribbon/camera_view_bottom.png">resources/icons/ribbon/camera_view_bottom.png</file>
+        <file alias="icons/ribbon/collision_geometry.png">resources/icons/ribbon/collision_geometry.png</file>
+        <file alias="icons/ribbon/browse_workbench.png">resources/icons/ribbon/browse_workbench.png</file>
+        <file alias="icons/ribbon/motion_workbench.png">resources/icons/ribbon/motion_workbench.png</file>
+        <file alias="icons/ribbon/tool_setup_workbench.png">resources/icons/ribbon/tool_setup_workbench.png</file>
+        <file alias="icons/ribbon/collision_workbench.png">resources/icons/ribbon/collision_workbench.png</file>
+        <file alias="icons/ribbon/motion_planning_workbench.png">resources/icons/ribbon/motion_planning_workbench.png</file>
+        <file alias="icons/ribbon/spray_process_workbench.png">resources/icons/ribbon/spray_process_workbench.png</file>
+        <file alias="icons/ribbon/coating_analysis_workbench.png">resources/icons/ribbon/coating_analysis_workbench.png</file>
+        <file alias="icons/ribbon/digital_twin_workbench.png">resources/icons/ribbon/digital_twin_workbench.png</file>
+    </qresource>
+</RCC>

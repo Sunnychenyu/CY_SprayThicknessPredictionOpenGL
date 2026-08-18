@@ -1,0 +1,53 @@
+﻿{
+    "businessPackage":  "RS2026-BusinessSource",
+    "businessVersion":  "1.0.1",
+    "platform":  "win64-vs2019",
+    "sourceCommit":  "e119884439b53cfb2496cadc000563f82c67dfdc",
+    "sourceBranch":  "branch-codex-dev",
+    "sourceDirty":  false,
+    "generatedAtUtc":  "2026-07-23T07:46:22Z",
+    "sourceAllowlist":  [
+                            "cmake",
+                            "config",
+                            "include",
+                            "SimWorkbench",
+                            "SMRobotApps",
+                            "SMRobotMotionPlanning",
+                            "SMRobotSpray",
+                            "tutorials\\prebuilt"
+                        ],
+    "omittedSourcePackages":  [
+                                  "Common",
+                                  "SMRobotCore",
+                                  "SMRobotPlatform"
+                              ],
+    "sdk":  {
+                "name":  "SMRobotSDK",
+                "pathHint":  "PrebuiltPackages",
+                "manifestSha256":  "a9e7be518b636b77f358a2871946bbc8588d195df5879fe3e017ec7a53f78af9",
+                "copiedThirdParty":  true
+            },
+    "thirdparty":  {
+                       "name":  "SMRobotWindowsThirdParty",
+                       "mode":  "sdk-curated-windows-external-fcl",
+                       "pathHint":  "PrebuiltPackages\\thirdparty",
+                       "gitCommit":  "a4e59c94c1588cfbb4d88c8f82261ecb14bc6e6f"
+                   },
+    "data":  {
+                 "name":  "SMRobotData",
+                 "mode":  "external",
+                 "pathHint":  "data",
+                 "gitCommit":  "1f1bbae43b530e2354dca5a5bc29c57d75768a5e"
+             },
+    "cmake":  {
+                  "prebuiltPackageRoot":  "PrebuiltPackages",
+                  "prebuiltThirdPartyRoot":  "PrebuiltPackages\\thirdparty",
+                  "thirdPartyRoot":  "PrebuiltPackages\\thirdparty",
+                  "dataRoot":  "data",
+                  "usingPrebuilt":  [
+                                        "Common",
+                                        "SMRobotCore",
+                                        "SMRobotPlatform"
+                                    ]
+              }
+}

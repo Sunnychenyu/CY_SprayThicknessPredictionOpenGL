@@ -1,0 +1,294 @@
+{
+    "assetSearchPaths": [
+        "${PROJECT_DIR}",
+        "${DATA_DIR}",
+        "${ENV:SMROBOT_ASSET_DIR}"
+    ],
+    "collision": {
+        "allowedPairs": [],
+        "detectors": [
+            {
+                "contacts": true,
+                "distance": true,
+                "distanceThreshold": 0.0,
+                "enabled": true,
+                "excludePairs": [],
+                "geometryRole": "Exact",
+                "id": "default_collision",
+                "maxContacts": 32,
+                "name": "Default Collision",
+                "nearestPoints": true,
+                "pairFilters": [],
+                "pairGenerators": [
+                    {
+                        "excludeLinksA": [],
+                        "excludeLinksB": [],
+                        "includeLinksA": [],
+                        "includeLinksB": [],
+                        "linkA": "",
+                        "linkB": "",
+                        "linkName": "",
+                        "objectA": "",
+                        "objectB": "",
+                        "objectGroupA": "",
+                        "objectGroupB": "",
+                        "objectGroupId": "",
+                        "objectId": "",
+                        "robotA": "",
+                        "robotB": "",
+                        "robotId": "",
+                        "type": "SceneAll"
+                    }
+                ],
+                "targets": [
+                    {
+                        "excludeLinks": [],
+                        "includeLinks": [],
+                        "objectGroupId": "",
+                        "objectId": "",
+                        "robotId": "iiwa_1"
+                    }
+                ],
+                "type": "SceneAll",
+                "visualization": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true
+                }
+            }
+        ],
+        "objectOverrides": [],
+        "query": {
+            "contacts": true,
+            "enabled": true,
+            "maxContacts": 32,
+            "nearestPoints": true,
+            "normals": true,
+            "pairs": [],
+            "robotObjectPairs": []
+        },
+        "robotOverrides": [],
+        "visualization": {
+            "alpha": 0.25,
+            "contactPointRadius": 0.025,
+            "normalLength": 0.12,
+            "showCollisionGeometry": false,
+            "showContacts": true,
+            "showNearestPoints": true,
+            "showNormals": true,
+            "showObjectHighlight": true
+        }
+    },
+    "objects": [],
+    "pointClouds": [],
+    "robotMounts": [
+        {
+            "id": "iiwa_1_flange",
+            "linkName": "iiwa_link_ee",
+            "linkToMount": {
+                "pitch": 1.5707963267948966,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "name": "iiwa_1_flange",
+            "robotId": "iiwa_1"
+        },
+        {
+            "id": "panda_arm_hand_1_mount_1",
+            "linkName": "panda_link8",
+            "linkToMount": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "name": "panda_arm_hand_1_mount_1",
+            "robotId": "panda_arm_hand_1"
+        }
+    ],
+    "robots": [
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "iiwa_1",
+            "initialJoints": [
+                {
+                    "jointName": "iiwa_joint_1",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "iiwa_joint_2",
+                    "value": 0.55
+                },
+                {
+                    "jointName": "iiwa_joint_3",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "iiwa_joint_4",
+                    "value": -1.1
+                },
+                {
+                    "jointName": "iiwa_joint_5",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "iiwa_joint_6",
+                    "value": 0.95
+                },
+                {
+                    "jointName": "iiwa_joint_7",
+                    "value": 0.0
+                }
+            ],
+            "name": "iiwa14",
+            "sourcePath": "data/drake_models/iiwa_description/urdf/iiwa14_spheres_dense_collision.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        },
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -0.7,
+                "y": 2.7755575615628914e-17,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "panda_arm_hand_1",
+            "initialJoints": [],
+            "name": "panda_arm_hand",
+            "sourcePath": "data/drake_models/franka_description/urdf/panda_arm_hand.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        }
+    ],
+    "sensors": [],
+    "toolAssets": [
+        {
+            "id": "my_tool_01_asset",
+            "mountToTcp": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -3.469446951953614e-18,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.060000000000000005
+            },
+            "mountToVisual": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -0.05,
+                "y": -0.05,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "name": "MyTool01",
+            "toolType": "generic_tool",
+            "visible": true,
+            "visualPath": "data/Tools/MyTool01.STL",
+            "visualScale": 1.0
+        },
+        {
+            "id": "my_tool_02_asset",
+            "mountToTcp": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.20999999999999988
+            },
+            "mountToVisual": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -0.05,
+                "y": -0.05,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "name": "MyTool02",
+            "toolType": "generic_tool",
+            "visible": true,
+            "visualPath": "data/Tools/MyTool02.STL",
+            "visualScale": 1.0
+        }
+    ],
+    "toolAttachments": [
+        {
+            "enabled": true,
+            "id": "iiwa_1_my_tool_01",
+            "name": "iiwa_1_MyTool01",
+            "robotMountId": "iiwa_1_flange",
+            "robotMountToToolMount": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "toolAssetId": "my_tool_01_asset",
+            "visible": true
+        },
+        {
+            "enabled": false,
+            "id": "iiwa_1_my_tool_02",
+            "name": "iiwa_1_MyTool02",
+            "robotMountId": "iiwa_1_flange",
+            "robotMountToToolMount": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -0.0,
+                "y": -0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "toolAssetId": "my_tool_02_asset",
+            "visible": true
+        }
+    ],
+    "tools": [],
+    "version": 3,
+    "view": {
+        "backgroundColor": {
+            "a": 1.0,
+            "b": 0.08,
+            "g": 0.06,
+            "r": 0.05
+        },
+        "camera": {
+            "distance": 3.0,
+            "pitch": -0.25,
+            "target": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.7
+            },
+            "upAxis": "Z",
+            "yaw": 0.0
+        },
+        "selectedLink": "iiwa_link_ee",
+        "selectedRobot": "iiwa_1",
+        "showAxis": true,
+        "showGrid": true
+    }
+}

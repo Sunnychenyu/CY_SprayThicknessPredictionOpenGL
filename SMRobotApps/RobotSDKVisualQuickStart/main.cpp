@@ -1,0 +1,23 @@
+#include "VisualQuickStartWindow.h"
+
+#include <QApplication>
+#include <QSurfaceFormat>
+
+int main(int argc, char** argv)
+{
+    QSurfaceFormat format;
+    format.setDepthBufferSize(24);
+    format.setStencilBufferSize(8);
+    format.setVersion(3, 3);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    QSurfaceFormat::setDefaultFormat(format);
+
+    QApplication app(argc, argv);
+
+    VisualQuickStartWindow window;
+    window.resize(1280, 760);
+    window.show();
+
+    return app.exec();
+}
+

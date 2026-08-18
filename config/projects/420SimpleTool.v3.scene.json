@@ -1,0 +1,236 @@
+{
+    "assetSearchPaths": [
+        "${PROJECT_DIR}",
+        "${DATA_DIR}",
+        "${ENV:SMROBOT_ASSET_DIR}"
+    ],
+    "collision": {
+        "allowedPairs": [],
+        "detectors": [
+            {
+                "contacts": true,
+                "distance": true,
+                "distanceThreshold": 0.0,
+                "enabled": true,
+                "excludePairs": [],
+                "geometryRole": "Exact",
+                "id": "default_collision",
+                "maxContacts": 32,
+                "name": "Default Collision",
+                "nearestPoints": true,
+                "pairFilters": [],
+                "pairGenerators": [
+                    {
+                        "excludeLinksA": [],
+                        "excludeLinksB": [],
+                        "includeLinksA": [],
+                        "includeLinksB": [],
+                        "linkA": "",
+                        "linkB": "",
+                        "linkName": "",
+                        "objectA": "",
+                        "objectB": "",
+                        "objectGroupA": "",
+                        "objectGroupB": "",
+                        "objectGroupId": "",
+                        "objectId": "",
+                        "robotA": "",
+                        "robotB": "",
+                        "robotId": "",
+                        "type": "SceneAll"
+                    }
+                ],
+                "queryPolicy": "",
+                "selectionSetAId": "",
+                "selectionSetBId": "",
+                "targets": [],
+                "type": "SceneAll",
+                "visualization": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": false,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            }
+        ],
+        "objectOverrides": [],
+        "query": {
+            "contacts": true,
+            "enabled": true,
+            "maxContacts": 32,
+            "nearestPoints": true,
+            "normals": true,
+            "pairs": [],
+            "robotObjectPairs": []
+        },
+        "robotOverrides": [],
+        "selectionSets": [
+            {
+                "enabled": true,
+                "id": "tool",
+                "members": [],
+                "name": "tool"
+            },
+            {
+                "enabled": true,
+                "id": "part",
+                "members": [],
+                "name": "part"
+            }
+        ],
+        "visualization": {
+            "alpha": 0.25,
+            "contactPointRadius": 0.025,
+            "normalLength": 0.12,
+            "showCollisionGeometry": false,
+            "showContacts": true,
+            "showNearestPoints": true,
+            "showNormals": true,
+            "showObjectHighlight": true,
+            "visible": true
+        }
+    },
+    "objects": [],
+    "pointClouds": [],
+    "robotMounts": [
+        {
+            "id": "zhuantai_SLDASM_1_mount_1",
+            "linkName": "Link2",
+            "linkToMount": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.75
+            },
+            "name": "zhuantai_SLDASM_1_mount_1",
+            "robotId": "zhuantai_SLDASM_1"
+        },
+        {
+            "id": "success_SLDASM_1_mount_1",
+            "linkName": "Link6",
+            "linkToMount": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.07
+            },
+            "name": "success_SLDASM_1_mount_1",
+            "robotId": "success_SLDASM_1"
+        }
+    ],
+    "robots": [
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -1.1,
+                "y": 2.7755575615628914e-17,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "success_SLDASM_1",
+            "initialJoints": [],
+            "name": "success.SLDASM",
+            "sourcePath": "data/Spray420/ABB4600URDF_NoTool/urdf/success.SLDASM.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        },
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.5,
+                "y": 0.0,
+                "yaw": -1.5707963267948966,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "zhuantai_SLDASM_1",
+            "initialJoints": [],
+            "name": "zhuantai.SLDASM",
+            "sourcePath": "data/Spray420/zhuantai.SLDASM/urdf/zhuantai.SLDASM.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        }
+    ],
+    "sensors": [],
+    "toolAssets": [
+        {
+            "id": "MyTool02",
+            "mountToTcp": {
+                "pitch": -0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 6.938893903907228e-18,
+                "yaw": 0.0,
+                "z": 0.2099999999999999
+            },
+            "mountToVisual": {
+                "pitch": -0.0,
+                "roll": 0.0,
+                "x": -0.05,
+                "y": -0.05,
+                "yaw": 0.0,
+                "z": -0.0
+            },
+            "name": "MyTool02",
+            "toolType": "tool",
+            "visible": true,
+            "visualPath": "data/Tools/MyTool02.STL",
+            "visualScale": 1.0
+        }
+    ],
+    "toolAttachments": [
+        {
+            "enabled": true,
+            "id": "MyTool02_attachment",
+            "name": "MyTool02",
+            "robotMountId": "success_SLDASM_1_mount_1",
+            "robotMountToToolMount": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "toolAssetId": "MyTool02",
+            "visible": true
+        }
+    ],
+    "tools": [],
+    "version": 2,
+    "view": {
+        "backgroundColor": {
+            "a": 1.0,
+            "b": 0.08,
+            "g": 0.06,
+            "r": 0.05
+        },
+        "camera": {
+            "distance": 4.0,
+            "pitch": 0.0,
+            "target": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "upAxis": "Z",
+            "yaw": 0.0
+        },
+        "selectedLink": "",
+        "selectedRobot": "",
+        "showAxis": true,
+        "showGrid": true
+    }
+}

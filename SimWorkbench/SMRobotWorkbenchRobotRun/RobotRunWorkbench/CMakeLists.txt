@@ -1,0 +1,45 @@
+cmake_minimum_required(VERSION 3.20)
+
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
+add_subdirectory(MotionControl)
+
+set(TARGET_NAME RobotRunWorkbench)
+
+add_library(${TARGET_NAME} INTERFACE)
+add_library(SMRobotWorkbenchRobotRun::${TARGET_NAME} ALIAS ${TARGET_NAME})
+
+target_link_libraries(${TARGET_NAME}
+    INTERFACE
+        SMRobotWorkbenchCommon::WorkbenchCommon
+        $<BUILD_INTERFACE:RobotRunMotionControl>
+        $<INSTALL_INTERFACE:SMRobotWorkbenchRobotRun::RobotRunMotionControl>
+        SMRobotWorkbenchCollisionConfig::CollisionRuntimeResults
+)
+
+target_compile_features(${TARGET_NAME}
+    INTERFACE
+        cxx_std_17
+)
+
+set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
+    SMRobotWorkbenchCommon::WorkbenchCommon
+    SMRobotWorkbenchRobotRun::RobotRunMotionControl
+    SMRobotWorkbenchCollisionConfig::CollisionRuntimeResults
+)
+
+set_target_properties(${TARGET_NAME}
+    PROPERTIES
+        FOLDER SMRobotWorkbenchRobotRun
+)
+
+set(${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR ${CMAKE_CURRENT_BINARY_DIR}/install_headers)
+file(MAKE_DIRECTORY ${${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR})
+
+function_InstallTarget(
+    TARGET_NAME ${TARGET_NAME}
+    PACKAGE_NAME ${PACKAGE_NAME}
+    PACKAGE_INTERFACE_HEADERS ${${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR}
+)

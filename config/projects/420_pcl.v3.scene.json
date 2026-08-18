@@ -1,0 +1,378 @@
+{
+    "compat": {
+        "sourceVersion": 3,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [],
+            "attachments": [],
+            "mountFrames": []
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [],
+                    "queryPolicy": "BetweenSets",
+                    "selectionSetAId": "tool",
+                    "selectionSetBId": "part",
+                    "targets": [],
+                    "type": "SelectedObjects"
+                }
+            ],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": [
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "burner_1",
+                        "robotId": "ABB4600_urdf_1"
+                    }
+                ]
+            },
+            "robotOverrides": [],
+            "selectionSets": [
+                {
+                    "enabled": true,
+                    "id": "tool",
+                    "members": [
+                        {
+                            "attachmentId": "",
+                            "linkName": "Link6",
+                            "objectId": "",
+                            "robotId": "ABB4600_urdf_1"
+                        }
+                    ],
+                    "name": "tool"
+                },
+                {
+                    "enabled": true,
+                    "id": "part",
+                    "members": [
+                        {
+                            "attachmentId": "",
+                            "linkName": "",
+                            "objectId": "burner_1",
+                            "robotId": ""
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "",
+                            "objectId": "bunny_cloud_1",
+                            "robotId": ""
+                        }
+                    ],
+                    "name": "part"
+                }
+            ]
+        },
+        "objects": [
+            {
+                "collisionEnabled": true,
+                "collisionScale": 1.0,
+                "id": "burner_1",
+                "name": "burner",
+                "objectType": "workpiece",
+                "sourcePath": "data/SprayDEC/burner.STL",
+                "transform": {
+                    "pitch": -1.6755160819145563,
+                    "roll": 0.0,
+                    "x": -0.8999999999999999,
+                    "y": -1.7000000000000004,
+                    "yaw": 0.0,
+                    "z": 1.3
+                },
+                "visible": true,
+                "visualScale": 1.0
+            }
+        ],
+        "pointClouds": [
+            {
+                "collision": {
+                    "enabled": true,
+                    "inflationMargin": 0.0,
+                    "maxProxyBoxes": 20000,
+                    "proxyType": "VoxelBoxes",
+                    "updateMode": "Static",
+                    "voxelSize": 0.03
+                },
+                "format": "pcd",
+                "id": "bunny_cloud_1",
+                "name": "bunny point cloud",
+                "scale": 3.0,
+                "sourceFrame": "world",
+                "sourcePath": "data/pcl/bunny.pcd",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.55,
+                    "y": -0.25,
+                    "yaw": 0.0,
+                    "z": 0.2
+                }
+            },
+            {
+                "collision": {
+                    "enabled": false,
+                    "inflationMargin": 0.0,
+                    "maxProxyBoxes": 20000,
+                    "proxyType": "VoxelBoxes",
+                    "updateMode": "Static",
+                    "voxelSize": 0.02
+                },
+                "format": "pcd",
+                "id": "bunny",
+                "name": "bunny",
+                "scale": 3.0,
+                "sourceFrame": "",
+                "sourcePath": "data/pcl/bunny.pcd",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                }
+            },
+            {
+                "collision": {
+                    "enabled": false,
+                    "inflationMargin": 0.0,
+                    "maxProxyBoxes": 20000,
+                    "proxyType": "VoxelBoxes",
+                    "updateMode": "Static",
+                    "voxelSize": 0.02
+                },
+                "format": "pcd",
+                "id": "milk",
+                "name": "milk",
+                "scale": 1.0,
+                "sourceFrame": "",
+                "sourcePath": "data/pcl/milk.pcd",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                }
+            },
+            {
+                "collision": {
+                    "enabled": false,
+                    "inflationMargin": 0.0,
+                    "maxProxyBoxes": 20000,
+                    "proxyType": "VoxelBoxes",
+                    "updateMode": "Static",
+                    "voxelSize": 0.02
+                },
+                "format": "pcd",
+                "id": "office1",
+                "name": "office1",
+                "scale": 1.0,
+                "sourceFrame": "",
+                "sourcePath": "data/pcl/office1.pcd",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 4.799655442984406,
+                    "x": 1.8500000000000012,
+                    "y": -1.0299999999999994,
+                    "yaw": 1.5707963267948966,
+                    "z": 0.0
+                }
+            }
+        ],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 1.4000000000000001,
+                    "y": -1.5,
+                    "yaw": 3.141592653589793,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "ABB4600_urdf_1",
+                "initialJoints": [],
+                "name": "ABB4600_urdf",
+                "sourcePath": "data/Spray420/ABB4600_urdf/urdf/ABB4600_urdf.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": false,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {
+            "bunny": {
+                "chunkSize": 0,
+                "colorMode": "FieldOrDefault",
+                "defaultColor": {
+                    "a": 1.0,
+                    "b": 0.85,
+                    "g": 0.9,
+                    "r": 0.2
+                },
+                "lodEnabled": false,
+                "maxRenderPoints": 0,
+                "pointSize": 5.0,
+                "visible": true,
+                "voxelDownsampleSize": 0.0
+            },
+            "bunny_cloud_1": {
+                "chunkSize": 0,
+                "colorMode": "FieldOrDefault",
+                "defaultColor": {
+                    "a": 1.0,
+                    "b": 0.85,
+                    "g": 0.9,
+                    "r": 0.2
+                },
+                "lodEnabled": false,
+                "maxRenderPoints": 0,
+                "pointSize": 5.0,
+                "visible": true,
+                "voxelDownsampleSize": 0.0
+            },
+            "milk": {
+                "chunkSize": 0,
+                "colorMode": "FieldOrDefault",
+                "defaultColor": {
+                    "a": 1.0,
+                    "b": 0.85,
+                    "g": 0.9,
+                    "r": 0.2
+                },
+                "lodEnabled": false,
+                "maxRenderPoints": 300000,
+                "pointSize": 2.5,
+                "visible": true,
+                "voxelDownsampleSize": 0.0
+            },
+            "office1": {
+                "chunkSize": 0,
+                "colorMode": "FieldOrDefault",
+                "defaultColor": {
+                    "a": 1.0,
+                    "b": 0.85,
+                    "g": 0.9,
+                    "r": 0.2
+                },
+                "lodEnabled": false,
+                "maxRenderPoints": 300000,
+                "pointSize": 2.5,
+                "visible": true,
+                "voxelDownsampleSize": 0.0
+            }
+        },
+        "view": {
+            "backgroundColor": {
+                "a": 1.0,
+                "b": 0.08,
+                "g": 0.06,
+                "r": 0.05
+            },
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {},
+            "attachments": {},
+            "objects": {
+                "burner_1": {
+                    "visible": true
+                }
+            },
+            "pointClouds": {
+                "bunny": {
+                    "visible": true
+                },
+                "bunny_cloud_1": {
+                    "visible": true
+                },
+                "milk": {
+                    "visible": true
+                },
+                "office1": {
+                    "visible": true
+                }
+            },
+            "robots": {
+                "ABB4600_urdf_1": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

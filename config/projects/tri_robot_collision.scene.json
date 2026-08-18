@@ -1,0 +1,188 @@
+{
+    "collision": {
+        "contacts": true,
+        "enabled": true,
+        "maxContacts": 32,
+        "nearestPoints": true,
+        "normals": true,
+        "pairs": [
+            {
+                "excludePairs": [],
+                "includeLinksA": [],
+                "includeLinksB": [],
+                "robotA": "panda_1",
+                "robotB": "iiwa_1"
+            }
+        ]
+    },
+    "collisionVisualization": {
+        "alpha": 0.25,
+        "contactPointRadius": 0.025,
+        "normalLength": 0.12,
+        "showCollisionGeometry": true,
+        "showContacts": true,
+        "showNearestPoints": true,
+        "showNormals": true,
+        "showObjectHighlight": true
+    },
+    "robots": [
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 1.88,
+                "y": 2.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "panda_1",
+            "initialJoints": [
+                {
+                    "jointName": "panda_joint1",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "panda_joint2",
+                    "value": -0.45
+                },
+                {
+                    "jointName": "panda_joint3",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "panda_joint4",
+                    "value": -1.75
+                },
+                {
+                    "jointName": "panda_joint5",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "panda_joint6",
+                    "value": 1.5
+                },
+                {
+                    "jointName": "panda_joint7",
+                    "value": 0.65
+                },
+                {
+                    "jointName": "panda_finger_joint1",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "panda_finger_joint2",
+                    "value": 0.0
+                }
+            ],
+            "name": "panda",
+            "sourcePath": "data/drake_models/franka_description/urdf/panda_arm_hand.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        },
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 0.3,
+                "y": 0.0,
+                "yaw": 3.141592653589793,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "iiwa_1",
+            "initialJoints": [
+                {
+                    "jointName": "iiwa_joint_1",
+                    "value": 3.14
+                },
+                {
+                    "jointName": "iiwa_joint_2",
+                    "value": 0.55
+                },
+                {
+                    "jointName": "iiwa_joint_3",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "iiwa_joint_4",
+                    "value": -1.1
+                },
+                {
+                    "jointName": "iiwa_joint_5",
+                    "value": 0.0
+                },
+                {
+                    "jointName": "iiwa_joint_6",
+                    "value": 0.95
+                },
+                {
+                    "jointName": "iiwa_joint_7",
+                    "value": 0.0
+                }
+            ],
+            "name": "iiwa",
+            "sourcePath": "data/drake_models/iiwa_description/urdf/iiwa14_spheres_dense_collision.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        },
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": 2.0,
+                "y": 0.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "ur10_1",
+            "initialJoints": [],
+            "name": "ur10",
+            "sourcePath": "data/URDF/ur_description/urdf/ur10.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        },
+        {
+            "baseTransform": {
+                "pitch": 0.0,
+                "roll": 0.0,
+                "x": -2.0,
+                "y": -1.0,
+                "yaw": 0.0,
+                "z": 0.0
+            },
+            "collisionEnabled": true,
+            "id": "ur10_2",
+            "initialJoints": [],
+            "name": "ur10",
+            "sourcePath": "data/URDF/ur_description/urdf/ur10.urdf",
+            "sourceType": "urdf",
+            "visible": true
+        }
+    ],
+    "version": 1,
+    "view": {
+        "backgroundColor": {
+            "a": 1.0,
+            "b": 0.08,
+            "g": 0.06,
+            "r": 0.05
+        },
+        "camera": {
+            "distance": 4.0,
+            "pitch": 0.0,
+            "target": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "upAxis": "Z",
+            "yaw": 0.0
+        },
+        "selectedLink": "",
+        "selectedRobot": "",
+        "showAxis": true,
+        "showGrid": true
+    }
+}

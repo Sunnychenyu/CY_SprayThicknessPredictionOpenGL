@@ -1,0 +1,271 @@
+{
+    "compat": {
+        "sourceVersion": 3,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [],
+            "attachments": [],
+            "mountFrames": [
+                {
+                    "frameName": "Link6",
+                    "id": "ToolMount",
+                    "mountType": "robot_mount",
+                    "name": "ToolMount",
+                    "ownerFrameToMount": {
+                        "pitch": 0.0,
+                        "roll": 0.0,
+                        "x": 0.0,
+                        "y": 0.0,
+                        "yaw": 0.0,
+                        "z": 0.07
+                    },
+                    "ownerId": "Red4600",
+                    "ownerType": "robot"
+                }
+            ]
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "",
+                            "type": "SceneAll"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [
+                        {
+                            "excludeLinks": [],
+                            "includeLinks": [],
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotId": "Red4600"
+                        }
+                    ],
+                    "type": "SceneAll"
+                }
+            ],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": [
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "420_tool",
+                        "robotId": "Red4600"
+                    },
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "420_tool",
+                        "robotId": "ATPPZ350"
+                    }
+                ]
+            },
+            "robotOverrides": [],
+            "selectionSets": []
+        },
+        "objects": [
+            {
+                "collisionEnabled": true,
+                "collisionScale": 1.0,
+                "id": "420_tool",
+                "name": "420-tool",
+                "objectFrames": [
+                    {
+                        "id": "420_tool_frame",
+                        "name": "Flange",
+                        "objectToFrame": {
+                            "pitch": 0.0,
+                            "roll": 0.0,
+                            "x": 0.06,
+                            "y": 0.06,
+                            "yaw": 0.0,
+                            "z": 0.005
+                        }
+                    },
+                    {
+                        "id": "420_tool_frame_1",
+                        "name": "TCP",
+                        "objectToFrame": {
+                            "pitch": 0.0,
+                            "roll": 0.0,
+                            "x": 0.14,
+                            "y": 0.222,
+                            "yaw": 0.0,
+                            "z": 0.244
+                        }
+                    }
+                ],
+                "objectType": "workpiece",
+                "sourcePath": "data/Spray420/420-tool.STL",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.7200000000000001,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.13999999999999999
+                },
+                "visible": true,
+                "visualScale": 1.0
+            }
+        ],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "Red4600",
+                "initialJoints": [],
+                "name": "Red4600",
+                "sourcePath": "data/Spray420/RedABB4600/urdf/Red4600.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            },
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 1.7000000000000013,
+                    "y": 0.0,
+                    "yaw": 1.5707963267948966,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "ATPPZ350",
+                "initialJoints": [],
+                "name": "ATPPZ350",
+                "sourcePath": "data/Spray420/ATPPZ350/urdf/ATPPZ350.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColor": {
+                "a": 1.0,
+                "b": 0.08,
+                "g": 0.06,
+                "r": 0.05
+            },
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {},
+            "attachments": {},
+            "objects": {
+                "420_tool": {
+                    "visible": true
+                }
+            },
+            "pointClouds": {},
+            "robots": {
+                "ATPPZ350": {
+                    "visible": true
+                },
+                "Red4600": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

@@ -1,0 +1,617 @@
+{
+    "compat": {
+        "sourceVersion": 3,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [
+                {
+                    "assetKind": "tool",
+                    "assetMountToVisual": {
+                        "pitch": -0.0,
+                        "roll": 0.0,
+                        "x": -0.06,
+                        "y": -0.06,
+                        "yaw": 0.0,
+                        "z": -0.005
+                    },
+                    "assetType": "workpiece",
+                    "functionalFrames": [
+                        {
+                            "assetMountToFrame": {
+                                "pitch": 0.0,
+                                "roll": 0.0,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "yaw": 0.0,
+                                "z": 0.0
+                            },
+                            "frameType": "objectFrame",
+                            "id": "420_tool_asset.object_frame",
+                            "name": "Flange",
+                            "primary": true
+                        }
+                    ],
+                    "id": "420_tool_asset",
+                    "name": "420-tool",
+                    "visualPath": "data/Spray420/420-tool.STL",
+                    "visualScale": 1.0
+                }
+            ],
+            "attachments": [
+                {
+                    "assetId": "420_tool_asset",
+                    "attachmentKind": "tool",
+                    "enabled": true,
+                    "id": "420_tool_attachment",
+                    "mountFrameId": "ToolMount",
+                    "mountToAssetMount": {
+                        "pitch": 0.0,
+                        "roll": 0.0,
+                        "x": 0.0,
+                        "y": 0.0,
+                        "yaw": 0.0,
+                        "z": 0.0
+                    },
+                    "name": "420-tool",
+                    "sourceObjectFrameId": "420_tool_frame",
+                    "sourceObjectId": "420_tool"
+                }
+            ],
+            "mountFrames": [
+                {
+                    "frameName": "Link6",
+                    "id": "ToolMount",
+                    "mountType": "robot_mount",
+                    "name": "ToolMount",
+                    "ownerFrameToMount": {
+                        "pitch": 0.0,
+                        "roll": 0.0,
+                        "x": 0.0,
+                        "y": 0.0,
+                        "yaw": 0.0,
+                        "z": 0.07
+                    },
+                    "ownerId": "Red4600",
+                    "ownerType": "robot"
+                }
+            ]
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link2"
+                            ],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "Link2",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "420_tool_attachment",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "ATPPZ350",
+                            "type": "LinkObject"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link1"
+                            ],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "Link1",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "420_tool_attachment",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "ATPPZ350",
+                            "type": "LinkObject"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "base_link"
+                            ],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "base_link",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "420_tool_attachment",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "ATPPZ350",
+                            "type": "LinkObject"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link6"
+                            ],
+                            "includeLinksB": [
+                                "Link2"
+                            ],
+                            "linkA": "Link6",
+                            "linkB": "Link2",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "Red4600",
+                            "robotB": "ATPPZ350",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link6"
+                            ],
+                            "includeLinksB": [
+                                "Link1"
+                            ],
+                            "linkA": "Link6",
+                            "linkB": "Link1",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "Red4600",
+                            "robotB": "ATPPZ350",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link6"
+                            ],
+                            "includeLinksB": [
+                                "base_link"
+                            ],
+                            "linkA": "Link6",
+                            "linkB": "base_link",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "Red4600",
+                            "robotB": "ATPPZ350",
+                            "robotId": "",
+                            "type": "LinkLink"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [],
+                    "type": "SelectedObjects"
+                }
+            ],
+            "objectOverrides": [
+                {
+                    "elements": [
+                        {
+                            "boxSize": {
+                                "x": 0.204897508025169,
+                                "y": 0.29053870588541,
+                                "z": 0.259686529636383
+                            },
+                            "enabled": true,
+                            "id": "420_tool_attachment_aabb_proxy",
+                            "inflationMargin": 0.0,
+                            "label": "420-tool AABB proxy",
+                            "length": 0.0,
+                            "localTransform": {
+                                "pitch": 0.0,
+                                "roll": 0.0,
+                                "x": 0.043073753416538,
+                                "y": 0.085916502922773,
+                                "yaw": 0.0,
+                                "z": 0.124843264818192
+                            },
+                            "meshPath": "",
+                            "meshScale": {
+                                "x": 1.0,
+                                "y": 1.0,
+                                "z": 1.0
+                            },
+                            "radius": 0.0,
+                            "role": "Exact",
+                            "source": "stlAabb:data/Spray420/420-tool.STL",
+                            "type": "Box"
+                        }
+                    ],
+                    "objectId": "420_tool_attachment",
+                    "overridePath": "",
+                    "replaceOriginalCollisions": true,
+                    "sourceObjectPath": "data/Spray420/420-tool.STL"
+                }
+            ],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": [
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "420_tool",
+                        "robotId": "Red4600"
+                    },
+                    {
+                        "enabled": true,
+                        "includeRobotLinks": [],
+                        "objectId": "420_tool",
+                        "robotId": "ATPPZ350"
+                    }
+                ]
+            },
+            "robotLinkModelSelections": [],
+            "robotOverrides": [
+                {
+                    "elements": [
+                        {
+                            "boxSize": {
+                                "x": 0.124884445220232,
+                                "y": 0.124808195978403,
+                                "z": 0.0699999302625649
+                            },
+                            "enabled": true,
+                            "id": "Red4600_Link6_aabb_proxy",
+                            "inflationMargin": 0.0,
+                            "label": "Red4600 Link6 AABB proxy",
+                            "length": 0.0,
+                            "linkName": "Link6",
+                            "localTransform": {
+                                "pitch": 0.0,
+                                "roll": 0.0,
+                                "x": 0.0000181626528501511,
+                                "y": 0.0000944789499044418,
+                                "yaw": 0.0,
+                                "z": 0.035000012814999
+                            },
+                            "meshPath": "",
+                            "meshScale": {
+                                "x": 1.0,
+                                "y": 1.0,
+                                "z": 1.0
+                            },
+                            "radius": 0.0,
+                            "role": "Exact",
+                            "source": "stlAabb:data/Spray420/RedABB4600/meshes/Link6.STL",
+                            "type": "Box"
+                        }
+                    ],
+                    "overridePath": "",
+                    "replaceOriginalCollisions": true,
+                    "robotId": "Red4600",
+                    "sourceRobotPath": "data/Spray420/RedABB4600/urdf/Red4600.urdf"
+                },
+                {
+                    "elements": [
+                        {
+                            "boxSize": {
+                                "x": 1.05649998784065,
+                                "y": 0.800000011920929,
+                                "z": 0.69999996945262
+                            },
+                            "enabled": true,
+                            "id": "ATPPZ350_base_link_aabb_proxy",
+                            "inflationMargin": 0.0,
+                            "label": "ATPPZ350 base_link AABB proxy",
+                            "length": 0.0,
+                            "linkName": "base_link",
+                            "localTransform": {
+                                "pitch": 0.0,
+                                "roll": 0.0,
+                                "x": -0.146249994635582,
+                                "y": 0.0800000131130219,
+                                "yaw": 0.0,
+                                "z": 0.369999984279275
+                            },
+                            "meshPath": "",
+                            "meshScale": {
+                                "x": 1.0,
+                                "y": 1.0,
+                                "z": 1.0
+                            },
+                            "radius": 0.0,
+                            "role": "Exact",
+                            "source": "stlAabb:data/Spray420/ATPPZ350/meshes/base_link.STL",
+                            "type": "Box"
+                        },
+                        {
+                            "boxSize": {
+                                "x": 0.574511811137199,
+                                "y": 0.506000012159348,
+                                "z": 0.497499987483025
+                            },
+                            "enabled": true,
+                            "id": "ATPPZ350_Link1_aabb_proxy",
+                            "inflationMargin": 0.0,
+                            "label": "ATPPZ350 Link1 AABB proxy",
+                            "length": 0.0,
+                            "linkName": "Link1",
+                            "localTransform": {
+                                "pitch": 0.0,
+                                "roll": 0.0,
+                                "x": -0.105755902826786,
+                                "y": -0.0380000025033951,
+                                "yaw": 0.0,
+                                "z": 0.228749997913837
+                            },
+                            "meshPath": "",
+                            "meshScale": {
+                                "x": 1.0,
+                                "y": 1.0,
+                                "z": 1.0
+                            },
+                            "radius": 0.0,
+                            "role": "Exact",
+                            "source": "stlAabb:data/Spray420/ATPPZ350/meshes/Link1.STL",
+                            "type": "Box"
+                        },
+                        {
+                            "boxSize": {
+                                "x": 0.800000011920929,
+                                "y": 0.797267615795135,
+                                "z": 0.372999996095897
+                            },
+                            "enabled": true,
+                            "id": "ATPPZ350_Link2_aabb_proxy",
+                            "inflationMargin": 0.0,
+                            "label": "ATPPZ350 Link2 AABB proxy",
+                            "length": 0.0,
+                            "linkName": "Link2",
+                            "localTransform": {
+                                "pitch": 0.0,
+                                "roll": 0.0,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "yaw": 0.0,
+                                "z": 0.186499997898935
+                            },
+                            "meshPath": "",
+                            "meshScale": {
+                                "x": 1.0,
+                                "y": 1.0,
+                                "z": 1.0
+                            },
+                            "radius": 0.0,
+                            "role": "Exact",
+                            "source": "stlAabb:data/Spray420/ATPPZ350/meshes/Link2.STL",
+                            "type": "Box"
+                        }
+                    ],
+                    "overridePath": "",
+                    "replaceOriginalCollisions": true,
+                    "robotId": "ATPPZ350",
+                    "sourceRobotPath": "data/Spray420/ATPPZ350/urdf/ATPPZ350.urdf"
+                }
+            ],
+            "selectionSets": []
+        },
+        "objects": [
+            {
+                "collisionEnabled": false,
+                "collisionScale": 1.0,
+                "id": "420_tool",
+                "name": "420-tool",
+                "objectFrames": [
+                    {
+                        "id": "420_tool_frame",
+                        "name": "Flange",
+                        "objectToFrame": {
+                            "pitch": 0.0,
+                            "roll": 0.0,
+                            "x": 0.06,
+                            "y": 0.06,
+                            "yaw": 0.0,
+                            "z": 0.005
+                        }
+                    },
+                    {
+                        "id": "420_tool_frame_1",
+                        "name": "TCP",
+                        "objectToFrame": {
+                            "pitch": 0.0,
+                            "roll": 0.0,
+                            "x": 0.14,
+                            "y": 0.222,
+                            "yaw": 0.0,
+                            "z": 0.244
+                        }
+                    }
+                ],
+                "objectType": "workpiece",
+                "sourcePath": "data/Spray420/420-tool.STL",
+                "transform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.7200000000000001,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.13999999999999999
+                },
+                "visible": false,
+                "visualScale": 1.0
+            }
+        ],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "Red4600",
+                "initialJoints": [],
+                "name": "Red4600",
+                "sourcePath": "data/Spray420/RedABB4600/urdf/Red4600.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            },
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 1.7000000000000013,
+                    "y": 0.0,
+                    "yaw": 1.5707963267948966,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "ATPPZ350",
+                "initialJoints": [],
+                "name": "ATPPZ350",
+                "sourcePath": "data/Spray420/ATPPZ350/urdf/ATPPZ350.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColor": {
+                "a": 1.0,
+                "b": 0.08,
+                "g": 0.06,
+                "r": 0.05
+            },
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {
+                "420_tool_asset": {
+                    "visible": true
+                }
+            },
+            "attachments": {
+                "420_tool_attachment": {
+                    "visible": true
+                }
+            },
+            "objects": {
+                "420_tool": {
+                    "visible": false
+                }
+            },
+            "pointClouds": {},
+            "robots": {
+                "ATPPZ350": {
+                    "visible": true
+                },
+                "Red4600": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

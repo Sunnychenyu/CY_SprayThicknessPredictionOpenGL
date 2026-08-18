@@ -1,0 +1,182 @@
+{
+    "version": 1,
+    "assetSearchPaths": [
+        "${PROJECT_DIR}",
+        "${DATA_DIR}",
+        "${ENV:SMROBOT_ASSET_DIR}"
+    ],
+    "robots": [
+        {
+            "id": "iiwa_1",
+            "name": "iiwa14",
+            "sourceType": "urdf",
+            "sourcePath": "data/drake_models/iiwa_description/urdf/iiwa14_spheres_dense_collision.urdf",
+            "baseTransform": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "initialJoints": [
+                { "jointName": "iiwa_joint_1", "value": 0.0 },
+                { "jointName": "iiwa_joint_2", "value": 0.55 },
+                { "jointName": "iiwa_joint_3", "value": 0.0 },
+                { "jointName": "iiwa_joint_4", "value": -1.1 },
+                { "jointName": "iiwa_joint_5", "value": 0.0 },
+                { "jointName": "iiwa_joint_6", "value": 0.95 },
+                { "jointName": "iiwa_joint_7", "value": 0.0 }
+            ],
+            "visible": true,
+            "collisionEnabled": true
+        }
+    ],
+    "objects": [],
+    "robotMounts": [
+        {
+            "id": "iiwa_1_flange",
+            "name": "iiwa_1_flange",
+            "robotId": "iiwa_1",
+            "linkName": "iiwa_link_ee",
+            "linkToMount": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            }
+        }
+    ],
+    "toolAssets": [
+        {
+            "id": "my_tool_01_asset",
+            "name": "MyTool01",
+            "toolType": "generic_tool",
+            "visualPath": "data/Tools/MyTool01.STL",
+            "visualScale": 1.0,
+            "mountToVisual": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "mountToTcp": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "visible": true
+        },
+        {
+            "id": "my_tool_02_asset",
+            "name": "MyTool02",
+            "toolType": "generic_tool",
+            "visualPath": "data/Tools/MyTool02.STL",
+            "visualScale": 1.0,
+            "mountToVisual": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 1.5707963267948965,
+                "yaw": 0.0
+            },
+            "mountToTcp": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.35,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "visible": true
+        }
+    ],
+    "toolAttachments": [
+        {
+            "id": "iiwa_1_my_tool_01",
+            "name": "iiwa_1_MyTool01",
+            "robotMountId": "iiwa_1_flange",
+            "toolAssetId": "my_tool_01_asset",
+            "robotMountToToolMount": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "visible": true,
+            "enabled": true
+        },
+        {
+            "id": "iiwa_1_my_tool_02",
+            "name": "iiwa_1_MyTool02",
+            "robotMountId": "iiwa_1_flange",
+            "toolAssetId": "my_tool_02_asset",
+            "robotMountToToolMount": {
+                "x": -0.025,
+                "y": -0.025,
+                "z": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0
+            },
+            "visible": true,
+            "enabled": false
+        }
+    ],
+    "tools": [],
+    "sensors": [],
+    "collision": {
+        "enabled": true,
+        "contacts": true,
+        "nearestPoints": true,
+        "normals": true,
+        "maxContacts": 32,
+        "pairs": [],
+        "robotObjectPairs": []
+    },
+    "collisionVisualization": {
+        "showCollisionGeometry": true,
+        "showContacts": true,
+        "showNormals": true,
+        "showNearestPoints": true,
+        "showObjectHighlight": true,
+        "alpha": 0.25,
+        "normalLength": 0.12,
+        "contactPointRadius": 0.025
+    },
+    "collisionDetectors": [],
+    "robotCollisionOverrides": [],
+    "view": {
+        "camera": {
+            "target": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.7
+            },
+            "distance": 3.0,
+            "yaw": 0.0,
+            "pitch": -0.25,
+            "upAxis": "Z"
+        },
+        "backgroundColor": {
+            "r": 0.05,
+            "g": 0.06,
+            "b": 0.08,
+            "a": 1.0
+        },
+        "showGrid": true,
+        "showAxis": true,
+        "selectedRobot": "iiwa_1",
+        "selectedLink": "iiwa_link_ee"
+    }
+}
