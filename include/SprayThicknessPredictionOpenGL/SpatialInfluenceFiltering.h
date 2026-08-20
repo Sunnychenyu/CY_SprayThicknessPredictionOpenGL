@@ -21,7 +21,7 @@ namespace spraythickness::opengl
         double cellSize{ 0.0 };
         bool manualCellSize{ false };
         double coneSlope{ 0.0 };
-        double contributionCutoffRatio{ 1.0e-6 };
+        double contributionCutoffRatio{ 1.0e-10 };
         std::vector<std::uint32_t> cellOffsets;
         std::vector<std::uint32_t> candidateSprayIndices;
         std::vector<std::uint32_t> vertexCellIndices;

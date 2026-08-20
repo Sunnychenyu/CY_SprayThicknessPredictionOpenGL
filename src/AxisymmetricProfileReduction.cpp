@@ -153,6 +153,22 @@ namespace spraythickness::opengl
         result.radialDirection = normalizedOr(
             projectToPlane(result.radialDirection, result.axisDirection),
             Eigen::Vector3d::UnitX());
+
+        // The displayed meridian is obtained from one reference plane, while
+        // full-model binding uses the true radial distance to the axis. Keep
+        // the selection envelope large enough for both coordinate definitions.
+        Eigen::Vector2d modelMinimum = Eigen::Vector2d::Constant(
+            std::numeric_limits<double>::max());
+        Eigen::Vector2d modelMaximum = Eigen::Vector2d::Constant(
+            std::numeric_limits<double>::lowest());
+        for(const auto& sample : workpiece.samples) {
+            const Eigen::Vector3d relative = sample.position - axisOrigin;
+            const double axial = relative.dot(result.axisDirection);
+            const Eigen::Vector3d radial = relative - axial * result.axisDirection;
+            const Eigen::Vector2d sectionPoint(radial.norm(), axial);
+            modelMinimum = modelMinimum.cwiseMin(sectionPoint);
+            modelMaximum = modelMaximum.cwiseMax(sectionPoint);
+        }
         const Eigen::Vector3d planeNormal = normalizedOr(
             result.axisDirection.cross(result.radialDirection), Eigen::Vector3d::UnitY());
 
@@ -304,10 +320,32 @@ namespace spraythickness::opengl
             for(;;) {
                 contour.points.push_back(nodes[currentNode].point());
                 std::size_t nextSegment = std::numeric_limits<std::size_t>::max();
+                double bestContinuity = -std::numeric_limits<double>::max();
                 for(const std::size_t candidate : nodes[currentNode].segments) {
                     if(candidate != previousSegment && !indexedSegments[candidate].used) {
-                        nextSegment = candidate;
-                        break;
+                        const IndexedSegment& candidateSegment = indexedSegments[candidate];
+                        const std::size_t nextNode = candidateSegment.firstNode == currentNode
+                            ? candidateSegment.secondNode : candidateSegment.firstNode;
+                        double continuity = 0.0;
+                        if(previousSegment != std::numeric_limits<std::size_t>::max()) {
+                            const IndexedSegment& previous = indexedSegments[previousSegment];
+                            const std::size_t previousNode = previous.firstNode == currentNode
+                                ? previous.secondNode : previous.firstNode;
+                            const Eigen::Vector2d incoming = nodes[currentNode].point().sectionPosition
+                                - nodes[previousNode].point().sectionPosition;
+                            const Eigen::Vector2d outgoing = nodes[nextNode].point().sectionPosition
+                                - nodes[currentNode].point().sectionPosition;
+                            if(incoming.squaredNorm() > 1.0e-24
+                                && outgoing.squaredNorm() > 1.0e-24) {
+                                continuity = incoming.normalized().dot(outgoing.normalized());
+                            }
+                        }
+                        if(nextSegment == std::numeric_limits<std::size_t>::max()
+                            || continuity > bestContinuity
+                            || (continuity == bestContinuity && candidate < nextSegment)) {
+                            nextSegment = candidate;
+                            bestContinuity = continuity;
+                        }
                     }
                 }
                 if(nextSegment == std::numeric_limits<std::size_t>::max()) {
@@ -351,6 +389,8 @@ namespace spraythickness::opengl
                 result.maximum = result.maximum.cwiseMax(point.sectionPosition);
             }
         }
+        result.minimum = result.minimum.cwiseMin(modelMinimum);
+        result.maximum = result.maximum.cwiseMax(modelMaximum);
         return result;
     }
 
@@ -496,6 +536,7 @@ namespace spraythickness::opengl
                         + static_cast<std::uint32_t>(sampleIndex - 1);
                     mappingSegment.secondSampleIndex = firstSampleIndex
                         + static_cast<std::uint32_t>(sampleIndex);
+                    mappingSegment.profilePathIndex = static_cast<std::uint32_t>(pathIndex);
                     const sprayworkpiece::SurfaceSample& previousSample =
                         result.predictionSamples[result.predictionSamples.size() - 2];
                     const Eigen::Vector3d previousRelative = previousSample.position - slice.axisOrigin;

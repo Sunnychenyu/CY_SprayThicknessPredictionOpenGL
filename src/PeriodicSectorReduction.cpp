@@ -26,7 +26,7 @@ namespace spraythickness::opengl
         constexpr double kPi = 3.1415926535897932384626433832795;
         constexpr double kTwoPi = 2.0 * kPi;
         constexpr std::uint64_t kPeriodicCacheMagic = 0x5253323032365052ull;
-        constexpr std::uint32_t kPeriodicCacheVersion = 2;
+        constexpr std::uint32_t kPeriodicCacheVersion = 3;
 
         std::mutex g_periodicCacheMutex;
         std::unordered_map<std::uint64_t, PeriodicSectorReduction> g_periodicCache;
@@ -256,6 +256,7 @@ namespace spraythickness::opengl
             std::array<std::uint32_t, 3> indices{};
             std::array<float, 3> weights{};
             double squaredDistance = std::numeric_limits<double>::max();
+            double normalAlignment = -1.0;
             bool found{ false };
         };
 
@@ -365,6 +366,142 @@ namespace spraythickness::opengl
             double angle)
         {
             return origin + canonicalizeVector(position - origin, axis, angle);
+        }
+
+        struct VertexCellKey
+        {
+            std::int64_t x{ 0 };
+            std::int64_t y{ 0 };
+            std::int64_t z{ 0 };
+
+            bool operator==(const VertexCellKey& other) const
+            {
+                return x == other.x && y == other.y && z == other.z;
+            }
+        };
+
+        struct VertexCellKeyHash
+        {
+            std::size_t operator()(const VertexCellKey& key) const
+            {
+                std::size_t value = std::hash<std::int64_t>{}(key.x);
+                value ^= std::hash<std::int64_t>{}(key.y)
+                    + 0x9e3779b9U + (value << 6U) + (value >> 2U);
+                value ^= std::hash<std::int64_t>{}(key.z)
+                    + 0x9e3779b9U + (value << 6U) + (value >> 2U);
+                return value;
+            }
+        };
+
+        VertexCellKey vertexCellKey(const Eigen::Vector3d& position, double cellSize)
+        {
+            return {
+                static_cast<std::int64_t>(std::floor(position.x() / cellSize)),
+                static_cast<std::int64_t>(std::floor(position.y() / cellSize)),
+                static_cast<std::int64_t>(std::floor(position.z() / cellSize))
+            };
+        }
+
+        void applyExactVertexBindings(
+            const sprayworkpiece::WorkpieceModel& workpiece,
+            const LocalMesh& localMesh,
+            const PeriodicLocalPredictionOptions& options,
+            const Eigen::Vector3d& axis,
+            const Eigen::Vector3d& radialX,
+            const Eigen::Vector3d& radialY,
+            double sectorAngle,
+            double minimumNormalDot,
+            PeriodicSectorReduction& result)
+        {
+            if(localMesh.workpiece.samples.empty()
+                || result.fullVertexBindings.size() != workpiece.samples.size()) {
+                return;
+            }
+
+            Eigen::Vector3d minimum = localMesh.workpiece.samples.front().position;
+            Eigen::Vector3d maximum = minimum;
+            for(const auto& sample : localMesh.workpiece.samples) {
+                minimum = minimum.cwiseMin(sample.position);
+                maximum = maximum.cwiseMax(sample.position);
+            }
+            const double positionTolerance = std::max(
+                1.0e-9,
+                (maximum - minimum).norm() * 1.0e-10);
+            const double squaredPositionTolerance = positionTolerance * positionTolerance;
+            std::unordered_map<VertexCellKey,
+                std::vector<std::uint32_t>, VertexCellKeyHash> localVerticesByCell;
+            localVerticesByCell.reserve(localMesh.workpiece.samples.size());
+            for(std::size_t localIndex = 0;
+                localIndex < localMesh.workpiece.samples.size();
+                ++localIndex) {
+                localVerticesByCell[vertexCellKey(
+                    localMesh.workpiece.samples[localIndex].position,
+                    positionTolerance)].push_back(static_cast<std::uint32_t>(localIndex));
+            }
+
+            for(std::size_t vertex = 0; vertex < workpiece.samples.size(); ++vertex) {
+                const auto& sample = workpiece.samples[vertex];
+                const double angle = angleAroundAxis(
+                    sample.position, options.axisOrigin, axis, radialX, radialY);
+                const double canonicalAngle = std::remainder(angle, sectorAngle);
+                const double rotationAngle = canonicalAngle - angle;
+                const Eigen::Vector3d canonicalPosition = canonicalizePosition(
+                    sample.position, options.axisOrigin, axis, rotationAngle);
+                Eigen::Vector3d canonicalNormal = canonicalizeVector(
+                    sample.normal, axis, rotationAngle);
+                if(canonicalNormal.norm() <= 1.0e-12) {
+                    continue;
+                }
+                canonicalNormal.normalize();
+
+                const VertexCellKey center = vertexCellKey(
+                    canonicalPosition, positionTolerance);
+                double bestDistance = squaredPositionTolerance;
+                double bestNormalAlignment = minimumNormalDot;
+                std::uint32_t bestLocalIndex = std::numeric_limits<std::uint32_t>::max();
+                for(std::int64_t offsetX = -1; offsetX <= 1; ++offsetX) {
+                    for(std::int64_t offsetY = -1; offsetY <= 1; ++offsetY) {
+                        for(std::int64_t offsetZ = -1; offsetZ <= 1; ++offsetZ) {
+                            const auto iterator = localVerticesByCell.find({
+                                center.x + offsetX,
+                                center.y + offsetY,
+                                center.z + offsetZ});
+                            if(iterator == localVerticesByCell.end()) {
+                                continue;
+                            }
+                            for(const std::uint32_t localIndex : iterator->second) {
+                                const auto& localSample = localMesh.workpiece.samples[localIndex];
+                                const double squaredDistance = (
+                                    canonicalPosition - localSample.position).squaredNorm();
+                                Eigen::Vector3d localNormal = localSample.normal;
+                                if(squaredDistance > bestDistance
+                                    || localNormal.norm() <= 1.0e-12) {
+                                    continue;
+                                }
+                                localNormal.normalize();
+                                const double normalAlignment = localNormal.dot(canonicalNormal);
+                                if(normalAlignment < bestNormalAlignment) {
+                                    continue;
+                                }
+                                if(squaredDistance < bestDistance
+                                    || normalAlignment > bestNormalAlignment
+                                    || bestLocalIndex == std::numeric_limits<std::uint32_t>::max()) {
+                                    bestDistance = squaredDistance;
+                                    bestNormalAlignment = normalAlignment;
+                                    bestLocalIndex = localIndex;
+                                }
+                            }
+                        }
+                    }
+                }
+                if(bestLocalIndex == std::numeric_limits<std::uint32_t>::max()) {
+                    continue;
+                }
+                const std::uint32_t sourceVertex = localMesh.localToGlobal[bestLocalIndex];
+                result.fullVertexBindings[vertex].sourceVertexIndices = {
+                    sourceVertex, sourceVertex, sourceVertex};
+                result.fullVertexBindings[vertex].weights = { 1.0f, 0.0f, 0.0f };
+            }
         }
 
         double squaredDistanceToBox(
@@ -571,10 +708,21 @@ namespace spraythickness::opengl
                     const Eigen::Vector3d closestPoint = weightedPoint(
                         weights, sample0.position, sample1.position, sample2.position);
                     const double squaredDistance = (queryPosition - closestPoint).squaredNorm();
-                    if(squaredDistance >= closest.squaredDistance) {
+                    const double distanceTieTolerance = closest.found
+                        ? std::max(1.0e-18, closest.squaredDistance * 1.0e-4 + 1.0e-18)
+                        : 0.0;
+                    const bool closer = !closest.found
+                        || squaredDistance + distanceTieTolerance < closest.squaredDistance;
+                    const bool sameDistance = closest.found
+                        && std::abs(squaredDistance - closest.squaredDistance)
+                            <= distanceTieTolerance;
+                    if((!closer && !sameDistance)
+                        || (sameDistance && interpolatedNormal.dot(queryNormal)
+                            < closest.normalAlignment)) {
                         continue;
                     }
                     closest.squaredDistance = squaredDistance;
+                    closest.normalAlignment = interpolatedNormal.dot(queryNormal);
                     closest.indices = {
                         localMesh.localToGlobal[local0],
                         localMesh.localToGlobal[local1],
@@ -1203,6 +1351,19 @@ namespace spraythickness::opengl
                 result.fullVertexBindings.push_back(binding);
             }
         }
+        // Prefer an exact source vertex whenever a periodic copy lands on a
+        // vertex evaluated in the base sector. This avoids crossing a sharp
+        // feature through nearest-triangle interpolation.
+        applyExactVertexBindings(
+            workpiece,
+            localMesh,
+            options,
+            axis,
+            radialX,
+            radialY,
+            sectorAngle,
+            minimumNormalDot,
+            result);
         savePeriodicCache(cacheKey, workpiece, result);
         {
             std::lock_guard<std::mutex> lock(g_periodicCacheMutex);
@@ -1348,7 +1509,21 @@ namespace spraythickness::opengl
         std::vector<float>& expandedThickness)
     {
         expandedThickness.assign(reduction.fullVertexBindings.size(), 0.0f);
+        // Vertices in the base sector were evaluated directly by the GPU.
+        // Preserve those values instead of sending them through the
+        // nearest-triangle interpolation used for the other vertices.
+        std::vector<std::uint8_t> directlyComputed(expandedThickness.size(), 0U);
+        for(const std::uint32_t vertex : reduction.predictionVertexIndices) {
+            if(vertex < directlyComputed.size()) {
+                directlyComputed[vertex] = 1U;
+            }
+        }
         for(std::size_t vertex = 0; vertex < reduction.fullVertexBindings.size(); ++vertex) {
+            if(directlyComputed[vertex] != 0U
+                && vertex < localThicknessByFullVertex.size()) {
+                expandedThickness[vertex] = localThicknessByFullVertex[vertex];
+                continue;
+            }
             const PeriodicSectorBinding& binding = reduction.fullVertexBindings[vertex];
             float value = 0.0f;
             for(std::size_t corner = 0; corner < 3; ++corner) {

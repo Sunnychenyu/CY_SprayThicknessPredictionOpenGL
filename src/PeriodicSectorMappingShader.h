@@ -121,6 +121,7 @@ void main()
     int stackSize = 1;
     stack[0] = 0;
     float closestSquaredDistance = 1.0e30;
+    float closestNormalAlignment = -1.0;
     uvec3 closestIndices = uvec3(0u);
     vec3 closestWeights = vec3(0.0);
     bool found = false;
@@ -130,9 +131,12 @@ void main()
         int nodeIndex = stack[--stackSize];
         if(nodeIndex < 0 || nodeIndex >= bvhNodes.length()) continue;
         BvhNode node = bvhNodes[nodeIndex];
+        float nodeDistanceTieTolerance = found
+            ? max(1.0e-12, closestSquaredDistance * 1.0e-4 + 1.0e-12)
+            : 0.0;
         if(squaredDistanceToBox(
             queryPosition, node.minimum.xyz, node.maximum.xyz)
-            > closestSquaredDistance) {
+            > closestSquaredDistance + nodeDistanceTieTolerance) {
             continue;
         }
 
@@ -166,8 +170,21 @@ void main()
                 vec3 closestPoint = weights.x * a + weights.y * b + weights.z * c;
                 float squaredDistance = dot(queryPosition - closestPoint,
                     queryPosition - closestPoint);
-                if(squaredDistance >= closestSquaredDistance) continue;
+                float distanceTieTolerance = found
+                    ? max(1.0e-12, closestSquaredDistance * 1.0e-4 + 1.0e-12)
+                    : 0.0;
+                bool closer = !found
+                    || squaredDistance + distanceTieTolerance < closestSquaredDistance;
+                bool sameDistance = found
+                    && abs(squaredDistance - closestSquaredDistance)
+                        <= distanceTieTolerance;
+                float normalAlignment = dot(interpolatedNormal, queryNormal);
+                if((!closer && !sameDistance)
+                    || (sameDistance && normalAlignment < closestNormalAlignment)) {
+                    continue;
+                }
                 closestSquaredDistance = squaredDistance;
+                closestNormalAlignment = normalAlignment;
                 closestIndices = uvec3(
                     localToGlobal[ia], localToGlobal[ib], localToGlobal[ic]);
                 closestWeights = weights;

@@ -10,6 +10,8 @@
 
 #include <glad/glad.h>
 
+#include <Eigen/Geometry>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -39,7 +41,9 @@ namespace spraythickness::opengl
         constexpr std::uint64_t kBatchProfileCacheMagic = 0x5253323032364250ull;
         constexpr std::uint32_t kBatchProfileCacheVersion = 1;
         constexpr std::uint64_t kAxisymmetricMappingCacheMagic = 0x5253323032364158ull;
-        constexpr std::uint32_t kAxisymmetricMappingCacheVersion = 1;
+        // The mapper now stores the selected profile segment and compares
+        // normals in the meridian reference plane. Invalidate older bindings.
+        constexpr std::uint32_t kAxisymmetricMappingCacheVersion = 3;
         constexpr std::uint64_t kInitialTargetVertexSprayPairs =
             128ull * 1024ull * 1024ull;
 
@@ -79,8 +83,10 @@ namespace spraythickness::opengl
         {
         public:
             explicit AxisymmetricProfileBvh(
-                const std::vector<spraythickness::AxisymmetricProfileSampleSegment>& segments)
+                const std::vector<spraythickness::AxisymmetricProfileSampleSegment>& segments,
+                const std::vector<sprayworkpiece::SurfaceSample>& profileSamples)
                 : m_segments(segments)
+                , m_profileSamples(profileSamples)
             {
                 m_segmentOrder.resize(segments.size());
                 std::iota(m_segmentOrder.begin(), m_segmentOrder.end(), 0u);
@@ -90,7 +96,8 @@ namespace spraythickness::opengl
             }
 
             spraythickness::AxisymmetricProfileBinding nearest(
-                const Eigen::Vector2d& point) const
+                const Eigen::Vector2d& point,
+                const Eigen::Vector3d& queryNormal) const
             {
                 spraythickness::AxisymmetricProfileBinding binding;
                 if(m_nodes.empty()) {
@@ -98,6 +105,11 @@ namespace spraythickness::opengl
                 }
 
                 double bestDistance = std::numeric_limits<double>::max();
+                double bestNormalAlignment = -1.0;
+                const Eigen::Vector3d queryNormalSafe = queryNormal.squaredNorm()
+                    > 1.0e-16
+                    ? queryNormal.normalized()
+                    : Eigen::Vector3d::UnitZ();
                 std::uint32_t bestSegment = std::numeric_limits<std::uint32_t>::max();
                 std::array<std::uint32_t, 64> pending{};
                 std::size_t pendingCount = 1;
@@ -119,14 +131,35 @@ namespace spraythickness::opengl
                                 segment.firstSectionPosition,
                                 segment.secondSectionPosition,
                                 interpolation);
-                            if(distance > bestDistance
-                                || (distance == bestDistance && segmentIndex >= bestSegment)) {
+                            const auto& firstSample = m_profileSamples[
+                                segment.firstSampleIndex];
+                            const auto& secondSample = m_profileSamples[
+                                segment.secondSampleIndex];
+                            const Eigen::Vector3d profileNormalRaw = firstSample.normal
+                                + interpolation * (secondSample.normal - firstSample.normal);
+                            const Eigen::Vector3d profileNormal = profileNormalRaw.squaredNorm()
+                                > 1.0e-16
+                                ? profileNormalRaw.normalized()
+                                : Eigen::Vector3d::UnitZ();
+                            const double normalAlignment = profileNormal.dot(queryNormalSafe);
+                            const double distanceTieTolerance = std::max(
+                                1.0e-16,
+                                bestDistance * 1.0e-4 + 1.0e-12);
+                            const bool closer = distance + distanceTieTolerance < bestDistance;
+                            const bool sameDistance = std::abs(distance - bestDistance)
+                                <= distanceTieTolerance;
+                            if((!closer && !sameDistance)
+                                || (sameDistance && normalAlignment < bestNormalAlignment)
+                                || (sameDistance && normalAlignment == bestNormalAlignment
+                                    && segmentIndex >= bestSegment)) {
                                 continue;
                             }
                             bestDistance = distance;
+                            bestNormalAlignment = normalAlignment;
                             bestSegment = segmentIndex;
                             binding.firstSampleIndex = segment.firstSampleIndex;
                             binding.secondSampleIndex = segment.secondSampleIndex;
+                            binding.segmentIndex = segmentIndex;
                             binding.interpolation = static_cast<float>(interpolation);
                             binding.active = true;
                         }
@@ -225,6 +258,7 @@ namespace spraythickness::opengl
             }
 
             const std::vector<spraythickness::AxisymmetricProfileSampleSegment>& m_segments;
+            const std::vector<sprayworkpiece::SurfaceSample>& m_profileSamples;
             std::vector<std::uint32_t> m_segmentOrder;
             std::vector<AxisymmetricProfileBvhNode> m_nodes;
         };
@@ -270,16 +304,30 @@ namespace spraythickness::opengl
             if(profile.sampleSegments.empty()) {
                 return bindings;
             }
-            const AxisymmetricProfileBvh segmentBvh(profile.sampleSegments);
+            const AxisymmetricProfileBvh segmentBvh(
+                profile.sampleSegments,
+                profile.predictionSamples);
             const Eigen::Vector3d axisOrigin = profile.axisOrigin;
             const Eigen::Vector3d axisDirection = profile.axisDirection.normalized();
+            Eigen::Vector3d radialDirection = profile.radialDirection
+                - profile.radialDirection.dot(axisDirection) * axisDirection;
+            radialDirection = radialDirection.squaredNorm() > 1.0e-16
+                ? radialDirection.normalized()
+                : (std::abs(axisDirection.x()) < 0.9
+                    ? Eigen::Vector3d::UnitX()
+                    : Eigen::Vector3d::UnitY());
+            Eigen::Vector3d tangentialDirection = axisDirection.cross(radialDirection);
+            tangentialDirection = tangentialDirection.squaredNorm() > 1.0e-16
+                ? tangentialDirection.normalized()
+                : Eigen::Vector3d::UnitZ();
             const Eigen::Vector2d selectionMinimum = profile.selectionMinimum.cwiseMin(
                 profile.selectionMaximum);
             const Eigen::Vector2d selectionMaximum = profile.selectionMinimum.cwiseMax(
                 profile.selectionMaximum);
             parallelForVertexRanges(bindings.size(),
                 [&workpiece, &bindings, &segmentBvh, axisOrigin, axisDirection,
-                    selectionMinimum, selectionMaximum](std::size_t first, std::size_t last) {
+                    radialDirection, tangentialDirection, selectionMinimum,
+                    selectionMaximum](std::size_t first, std::size_t last) {
                     for(std::size_t vertex = first; vertex < last; ++vertex) {
                         const Eigen::Vector3d relative =
                             workpiece.samples[vertex].position - axisOrigin;
@@ -292,7 +340,24 @@ namespace spraythickness::opengl
                             || sectionPoint.y() > selectionMaximum.y()) {
                             continue;
                         }
-                        bindings[vertex] = segmentBvh.nearest(sectionPoint);
+
+                        // Profile normals are expressed in the reference
+                        // meridian. Rotate each full-model normal back to that
+                        // meridian before comparing candidate branches. A
+                        // direct 3D dot product would make the same cylinder
+                        // choose different branches at different azimuths.
+                        const double radialReference = radial.dot(radialDirection);
+                        const double tangentialReference = radial.dot(tangentialDirection);
+                        const double radialLengthSquared = radial.squaredNorm();
+                        const double azimuth = radialLengthSquared > 1.0e-16
+                            ? std::atan2(tangentialReference, radialReference)
+                            : 0.0;
+                        const Eigen::Vector3d canonicalNormal =
+                            Eigen::AngleAxisd(-azimuth, axisDirection)
+                                * workpiece.samples[vertex].normal;
+                        bindings[vertex] = segmentBvh.nearest(
+                            sectionPoint,
+                            canonicalNormal);
                     }
                 });
             return bindings;
@@ -354,6 +419,9 @@ namespace spraythickness::opengl
                 append(&sample.position.x(), sizeof(double));
                 append(&sample.position.y(), sizeof(double));
                 append(&sample.position.z(), sizeof(double));
+                append(&sample.normal.x(), sizeof(double));
+                append(&sample.normal.y(), sizeof(double));
+                append(&sample.normal.z(), sizeof(double));
             }
             if(!workpiece.triangleIndices.empty()) {
                 append(
@@ -382,6 +450,7 @@ namespace spraythickness::opengl
             for(const auto& segment : profile.sampleSegments) {
                 append(&segment.firstSampleIndex, sizeof(segment.firstSampleIndex));
                 append(&segment.secondSampleIndex, sizeof(segment.secondSampleIndex));
+                append(&segment.profilePathIndex, sizeof(segment.profilePathIndex));
                 append(segment.firstSectionPosition.data(), sizeof(double) * 2);
                 append(segment.secondSectionPosition.data(), sizeof(double) * 2);
             }
@@ -407,6 +476,7 @@ namespace spraythickness::opengl
         {
             std::uint32_t firstSampleIndex{ 0 };
             std::uint32_t secondSampleIndex{ 0 };
+            std::uint32_t segmentIndex{ 0 };
             float interpolation{ 0.0f };
             std::uint32_t active{ 0 };
         };
@@ -450,6 +520,7 @@ namespace spraythickness::opengl
             for(std::size_t index = 0; index < expectedBindingCount; ++index) {
                 (*bindings)[index].firstSampleIndex = diskBindings[index].firstSampleIndex;
                 (*bindings)[index].secondSampleIndex = diskBindings[index].secondSampleIndex;
+                (*bindings)[index].segmentIndex = diskBindings[index].segmentIndex;
                 (*bindings)[index].interpolation = diskBindings[index].interpolation;
                 (*bindings)[index].active = diskBindings[index].active != 0;
             }
@@ -482,6 +553,7 @@ namespace spraythickness::opengl
             for(std::size_t index = 0; index < bindings.size(); ++index) {
                 diskBindings[index].firstSampleIndex = bindings[index].firstSampleIndex;
                 diskBindings[index].secondSampleIndex = bindings[index].secondSampleIndex;
+                diskBindings[index].segmentIndex = bindings[index].segmentIndex;
                 diskBindings[index].interpolation = bindings[index].interpolation;
                 diskBindings[index].active = bindings[index].active ? 1u : 0u;
             }
@@ -1638,6 +1710,13 @@ namespace spraythickness::opengl
             double mappingMilliseconds = 0.0;
             double axisymmetricMappingMilliseconds = 0.0;
             bool axisymmetricMappingCacheHit = false;
+            std::size_t axisymmetricBindingCount = 0;
+            std::size_t axisymmetricActiveBindingCount = 0;
+            std::size_t axisymmetricMappedZeroCount = 0;
+            std::size_t axisymmetricMappedNonzeroCount = 0;
+            std::size_t axisymmetricMappedInvalidCount = 0;
+            std::size_t axisymmetricActiveSegmentCount = 0;
+            std::size_t axisymmetricActiveProfilePathCount = 0;
             std::vector<std::string> predictionWarnings;
             const bool axisymmetricProfileApplied =
                 task.options.axisymmetricProfile.enabled;
@@ -1714,8 +1793,8 @@ namespace spraythickness::opengl
                 mappingMilliseconds = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - mappingStart).count();
             }
-            const std::size_t predictionVertexCount = predictionVertexIndices.size();
-            if(predictionVertexCount == 0) {
+            const std::size_t spatialInputVertexCount = predictionVertexIndices.size();
+            if(spatialInputVertexCount == 0) {
                 throw std::runtime_error("Spatial filtering produced no prediction vertices.");
             }
             const auto gridStart = std::chrono::steady_clock::now();
@@ -1773,11 +1852,51 @@ namespace spraythickness::opengl
                     }
                 }
             }
-            const double totalPairs = static_cast<double>(predictionVertexCount)
+            const double totalPairs = static_cast<double>(spatialInputVertexCount)
                 * static_cast<double>(allSpraySamples.size());
             const double candidateRatio = totalPairs > 0.0
                 ? static_cast<double>(selectedCandidatePairs) / totalPairs
                 : 0.0;
+            const bool candidateVertexFilteringRequested =
+                task.options.spatialFiltering.filterCandidateVertices
+                && !periodicReductionApplied
+                && !axisymmetricProfileApplied;
+            std::vector<std::uint32_t> candidateVertexIndices;
+            std::vector<std::uint32_t> candidateVertexCellIndices;
+            if(candidateVertexFilteringRequested) {
+                candidateVertexIndices.reserve(predictionVertexIndices.size());
+                candidateVertexCellIndices.reserve(predictionVertexIndices.size());
+                for(std::size_t predictionVertex = 0;
+                    predictionVertex < predictionVertexIndices.size();
+                    ++predictionVertex) {
+                    if(predictionVertex >= grid.vertexCellIndices.size()) {
+                        continue;
+                    }
+                    const std::size_t cell = grid.vertexCellIndices[predictionVertex];
+                    if(cell + 1 >= grid.cellOffsets.size()
+                        || grid.cellOffsets[cell] == grid.cellOffsets[cell + 1]) {
+                        continue;
+                    }
+                    candidateVertexIndices.push_back(predictionVertexIndices[predictionVertex]);
+                    candidateVertexCellIndices.push_back(
+                        static_cast<std::uint32_t>(cell));
+                }
+            }
+            // Keep the original complete-model result buffers. Only this
+            // dispatch list changes, so skipped vertices remain exact zeroes.
+            const bool candidateVertexFilteringApplied = candidateVertexFilteringRequested;
+            const std::vector<std::uint32_t>& dispatchVertexIndices =
+                candidateVertexFilteringApplied
+                ? candidateVertexIndices
+                : predictionVertexIndices;
+            const std::vector<std::uint32_t>& dispatchVertexCellIndices =
+                candidateVertexFilteringApplied
+                ? candidateVertexCellIndices
+                : grid.vertexCellIndices;
+            const std::size_t predictionVertexCount = dispatchVertexIndices.size();
+            const std::size_t spatialSkippedVertexCount = candidateVertexFilteringApplied
+                ? spatialInputVertexCount - predictionVertexCount
+                : 0;
             reportProgress(
                 execution,
                 0.10,
@@ -1795,6 +1914,9 @@ namespace spraythickness::opengl
                     + std::to_string(grid.candidateCellPairs)
                     + ", candidateVertexPairs="
                     + std::to_string(selectedCandidatePairs)
+                    + ", candidateVertices="
+                    + std::to_string(predictionVertexCount)
+                    + "/" + std::to_string(spatialInputVertexCount)
                     + ", ratio=" + std::to_string(candidateRatio * 100.0)
                     + "% in " + std::to_string(gridMilliseconds) + " ms").c_str());
 
@@ -1837,7 +1959,8 @@ namespace spraythickness::opengl
                 task,
                 static_cast<int>(computationWorkpiece.samples.size()),
                 static_cast<int>(predictionVertexCount),
-                periodicReductionApplied || axisymmetricProfileApplied);
+                periodicReductionApplied || axisymmetricProfileApplied
+                    || candidateVertexFilteringApplied);
             checkOpenGlErrors("spatial compute program setup");
 
             const int maximumBlockSize = capabilities.maximumBlockSize;
@@ -1925,13 +2048,13 @@ namespace spraythickness::opengl
             factorBuffer.upload(8, historyFactor.data(), historyFactor.size() * sizeof(float), GL_DYNAMIC_COPY);
             predictionVertexBuffer.upload(
                 9,
-                predictionVertexIndices.data(),
-                predictionVertexIndices.size() * sizeof(std::uint32_t),
+                dispatchVertexIndices.data(),
+                dispatchVertexIndices.size() * sizeof(std::uint32_t),
                 GL_STATIC_DRAW);
             vertexCellBuffer.upload(
                 11,
-                grid.vertexCellIndices.data(),
-                grid.vertexCellIndices.size() * sizeof(std::uint32_t),
+                dispatchVertexCellIndices.data(),
+                dispatchVertexCellIndices.size() * sizeof(std::uint32_t),
                 GL_STATIC_DRAW);
             cellOffsetBuffer.upload(
                 12,
@@ -1986,13 +2109,11 @@ namespace spraythickness::opengl
                 grid.cellCount(),
                 0U);
             for(std::size_t predictionVertex = 0;
-                predictionVertex < predictionVertexIndices.size();
+                predictionVertex < dispatchVertexCellIndices.size();
                 ++predictionVertex) {
-                if(predictionVertex < grid.vertexCellIndices.size()) {
-                    const std::size_t cell = grid.vertexCellIndices[predictionVertex];
-                    if(cell < predictionVerticesPerCell.size()) {
-                        ++predictionVerticesPerCell[cell];
-                    }
+                const std::size_t cell = dispatchVertexCellIndices[predictionVertex];
+                if(cell < predictionVerticesPerCell.size()) {
+                    ++predictionVerticesPerCell[cell];
                 }
             }
             reportProgress(
@@ -2108,6 +2229,25 @@ namespace spraythickness::opengl
             const auto downloadStart = std::chrono::steady_clock::now();
             thicknessBuffer.download(thickness.data(), thickness.size() * sizeof(float));
             checkOpenGlErrors("spatial result readback");
+            if(axisymmetricProfileApplied) {
+                const std::size_t profileOffset = task.workpiece.samples.size();
+                const std::size_t profileCount = task.options.axisymmetricProfile
+                    .predictionSamples.size();
+                std::size_t activeProfileSamples = 0;
+                for(std::size_t index = 0; index < profileCount; ++index) {
+                    const std::size_t thicknessIndex = profileOffset + index;
+                    if(thicknessIndex < thickness.size()
+                        && std::abs(thickness[thicknessIndex]) > 1.0e-9f) {
+                        ++activeProfileSamples;
+                    }
+                }
+                reportProgress(
+                    execution,
+                    0.98,
+                    (std::string("Axisymmetric profile samples with thickness=")
+                        + std::to_string(activeProfileSamples) + "/"
+                        + std::to_string(profileCount)).c_str());
+            }
             const double downloadMilliseconds = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - downloadStart).count();
             if(periodicReductionApplied) {
@@ -2124,6 +2264,79 @@ namespace spraythickness::opengl
                 const std::shared_ptr<const std::vector<AxisymmetricProfileBinding>>
                     fullVertexBindings = cachedAxisymmetricProfileBindings(
                         task.workpiece, profile, axisymmetricMappingCacheHit);
+                axisymmetricBindingCount = fullVertexBindings->size();
+                axisymmetricActiveBindingCount = static_cast<std::size_t>(std::count_if(
+                    fullVertexBindings->begin(),
+                    fullVertexBindings->end(),
+                    [](const AxisymmetricProfileBinding& binding) {
+                        return binding.active;
+                    }));
+                std::vector<std::uint8_t> activeSegmentFlags(profile.sampleSegments.size(), 0U);
+                std::uint32_t maximumProfilePathIndex = 0;
+                for(const auto& segment : profile.sampleSegments) {
+                    maximumProfilePathIndex = std::max(
+                        maximumProfilePathIndex, segment.profilePathIndex);
+                }
+                std::vector<std::uint8_t> activeProfilePathFlags(
+                    profile.sampleSegments.empty() ? 0 : maximumProfilePathIndex + 1,
+                    0U);
+                for(const AxisymmetricProfileBinding& binding : *fullVertexBindings) {
+                    if(!binding.active) {
+                        continue;
+                    }
+                    if(binding.segmentIndex < activeSegmentFlags.size()) {
+                        activeSegmentFlags[binding.segmentIndex] = 1U;
+                    }
+                    if(binding.segmentIndex < profile.sampleSegments.size()) {
+                        const std::uint32_t pathIndex =
+                            profile.sampleSegments[binding.segmentIndex].profilePathIndex;
+                        if(pathIndex < activeProfilePathFlags.size()) {
+                            activeProfilePathFlags[pathIndex] = 1U;
+                        }
+                    }
+                    const std::size_t firstSample = profileOffset + binding.firstSampleIndex;
+                    const std::size_t secondSample = profileOffset + binding.secondSampleIndex;
+                    if(firstSample >= thickness.size() || secondSample >= thickness.size()) {
+                        ++axisymmetricMappedInvalidCount;
+                        continue;
+                    }
+                    const float interpolation = std::clamp(binding.interpolation, 0.0f, 1.0f);
+                    const float mappedValue = (1.0f - interpolation) * thickness[firstSample]
+                        + interpolation * thickness[secondSample];
+                    if(std::abs(mappedValue) <= 1.0e-9f) {
+                        ++axisymmetricMappedZeroCount;
+                    } else {
+                        ++axisymmetricMappedNonzeroCount;
+                    }
+                }
+                axisymmetricActiveSegmentCount = static_cast<std::size_t>(std::count(
+                    activeSegmentFlags.begin(), activeSegmentFlags.end(), 1U));
+                axisymmetricActiveProfilePathCount = static_cast<std::size_t>(std::count(
+                    activeProfilePathFlags.begin(), activeProfilePathFlags.end(), 1U));
+                reportProgress(
+                    execution,
+                    0.985,
+                    (std::string(axisymmetricMappingCacheHit
+                        ? "Axisymmetric mapping cache hit"
+                        : "Axisymmetric mapping built")
+                        + "; active bindings="
+                        + std::to_string(axisymmetricActiveBindingCount)
+                        + "/" + std::to_string(fullVertexBindings->size())
+                        + " ("
+                        + std::to_string(fullVertexBindings->empty()
+                            ? 0.0
+                            : 100.0 * static_cast<double>(axisymmetricActiveBindingCount)
+                                / static_cast<double>(fullVertexBindings->size()))
+                        + "%), segments=" + std::to_string(axisymmetricActiveSegmentCount)
+                        + ", profilePaths=" + std::to_string(axisymmetricActiveProfilePathCount)
+                        + ", mappedZero=" + std::to_string(axisymmetricMappedZeroCount)
+                        + ", mappedNonzero=" + std::to_string(axisymmetricMappedNonzeroCount)
+                        + ", mappedInvalid=" + std::to_string(axisymmetricMappedInvalidCount)
+                        + ", selection r=["
+                        + std::to_string(profile.selectionMinimum.x()) + ","
+                        + std::to_string(profile.selectionMaximum.x()) + "], z=["
+                        + std::to_string(profile.selectionMinimum.y()) + ","
+                        + std::to_string(profile.selectionMaximum.y()) + "]").c_str());
                 std::vector<float> expandedThickness;
                 expandAxisymmetricProfileThickness(
                     *fullVertexBindings,
@@ -2170,10 +2383,19 @@ namespace spraythickness::opengl
             result.timing.backendTotalMilliseconds = totalMilliseconds;
             result.timing.spatialGridCellSizeMeters = grid.cellSize;
             result.timing.predictionVertexCount = predictionVertexCount;
+            result.timing.spatialInputVertexCount = spatialInputVertexCount;
+            result.timing.spatialSkippedVertexCount = spatialSkippedVertexCount;
             result.timing.sprayPointCount = allSpraySamples.size();
             result.timing.spatialGridCellCount = grid.cellCount();
             result.timing.spatialGridCandidateCellPairs = grid.candidateCellPairs;
             result.timing.spatialGridCandidateVertexPairs = selectedCandidatePairs;
+            result.timing.axisymmetricBindingCount = axisymmetricBindingCount;
+            result.timing.axisymmetricActiveBindingCount = axisymmetricActiveBindingCount;
+            result.timing.axisymmetricMappedZeroCount = axisymmetricMappedZeroCount;
+            result.timing.axisymmetricMappedNonzeroCount = axisymmetricMappedNonzeroCount;
+            result.timing.axisymmetricMappedInvalidCount = axisymmetricMappedInvalidCount;
+            result.timing.axisymmetricActiveSegmentCount = axisymmetricActiveSegmentCount;
+            result.timing.axisymmetricActiveProfilePathCount = axisymmetricActiveProfilePathCount;
             result.timing.spatialGridDimensionX = grid.dimensions.x();
             result.timing.spatialGridDimensionY = grid.dimensions.y();
             result.timing.spatialGridDimensionZ = grid.dimensions.z();
