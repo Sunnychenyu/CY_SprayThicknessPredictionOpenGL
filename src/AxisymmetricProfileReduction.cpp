@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <unordered_map>
+#include <utility>
 
 namespace spraythickness::opengl
 {
@@ -79,43 +80,97 @@ namespace spraythickness::opengl
             return result;
         }
 
-        bool clipSegmentToSelection(
+        double cross2d(const Eigen::Vector2d& first, const Eigen::Vector2d& second)
+        {
+            return first.x() * second.y() - first.y() * second.x();
+        }
+
+        std::vector<std::pair<double, double>> clipSegmentToSelection(
             const AxisymmetricProfileSelection& selection,
             const Eigen::Vector2d& first,
-            const Eigen::Vector2d& second,
-            double& minimumT,
-            double& maximumT)
+            const Eigen::Vector2d& second)
         {
-            minimumT = 0.0;
-            maximumT = 1.0;
+            std::vector<std::pair<double, double>> intervals;
             if(!selection.enabled) {
-                return true;
+                intervals.emplace_back(0.0, 1.0);
+                return intervals;
             }
-            const Eigen::Vector2d minimum = selection.minimum.cwiseMin(selection.maximum);
-            const Eigen::Vector2d maximum = selection.minimum.cwiseMax(selection.maximum);
+            if(selection.polygon.size() < 3) {
+                double minimumT = 0.0;
+                double maximumT = 1.0;
+                const Eigen::Vector2d minimum = selection.minimum.cwiseMin(selection.maximum);
+                const Eigen::Vector2d maximum = selection.minimum.cwiseMax(selection.maximum);
+                const Eigen::Vector2d delta = second - first;
+                for(int dimension = 0; dimension < 2; ++dimension) {
+                    if(std::abs(delta[dimension]) <= 1.0e-15) {
+                        if(first[dimension] < minimum[dimension]
+                            || first[dimension] > maximum[dimension]) {
+                            return intervals;
+                        }
+                        continue;
+                    }
+                    double entry = (minimum[dimension] - first[dimension]) / delta[dimension];
+                    double exit = (maximum[dimension] - first[dimension]) / delta[dimension];
+                    if(entry > exit) {
+                        std::swap(entry, exit);
+                    }
+                    minimumT = std::max(minimumT, entry);
+                    maximumT = std::min(maximumT, exit);
+                    if(minimumT > maximumT) {
+                        return intervals;
+                    }
+                }
+                minimumT = std::clamp(minimumT, 0.0, 1.0);
+                maximumT = std::clamp(maximumT, 0.0, 1.0);
+                if(minimumT <= maximumT) {
+                    intervals.emplace_back(minimumT, maximumT);
+                }
+                return intervals;
+            }
+
+            std::vector<double> parameters{ 0.0, 1.0 };
             const Eigen::Vector2d delta = second - first;
-            for(int dimension = 0; dimension < 2; ++dimension) {
-                if(std::abs(delta[dimension]) <= 1.0e-15) {
-                    if(first[dimension] < minimum[dimension]
-                        || first[dimension] > maximum[dimension]) {
-                        return false;
+            for(std::size_t index = 0; index < selection.polygon.size(); ++index) {
+                const Eigen::Vector2d edgeStart = selection.polygon[index];
+                const Eigen::Vector2d edge = selection.polygon[
+                    (index + 1) % selection.polygon.size()] - edgeStart;
+                const double denominator = cross2d(delta, edge);
+                if(std::abs(denominator) <= 1.0e-15) {
+                    if(delta.squaredNorm() > 1.0e-24
+                        && std::abs(cross2d(edgeStart - first, delta)) <= 1.0e-10) {
+                        parameters.push_back(std::clamp(
+                            (edgeStart - first).dot(delta) / delta.squaredNorm(), 0.0, 1.0));
+                        parameters.push_back(std::clamp(
+                            (edgeStart + edge - first).dot(delta) / delta.squaredNorm(),
+                            0.0, 1.0));
                     }
                     continue;
                 }
-                double entry = (minimum[dimension] - first[dimension]) / delta[dimension];
-                double exit = (maximum[dimension] - first[dimension]) / delta[dimension];
-                if(entry > exit) {
-                    std::swap(entry, exit);
-                }
-                minimumT = std::max(minimumT, entry);
-                maximumT = std::min(maximumT, exit);
-                if(minimumT > maximumT) {
-                    return false;
+                const Eigen::Vector2d offset = edgeStart - first;
+                const double segmentT = cross2d(offset, edge) / denominator;
+                const double edgeT = cross2d(offset, delta) / denominator;
+                if(segmentT >= -1.0e-12 && segmentT <= 1.0 + 1.0e-12
+                    && edgeT >= -1.0e-12 && edgeT <= 1.0 + 1.0e-12) {
+                    parameters.push_back(std::clamp(segmentT, 0.0, 1.0));
                 }
             }
-            minimumT = std::clamp(minimumT, 0.0, 1.0);
-            maximumT = std::clamp(maximumT, 0.0, 1.0);
-            return minimumT <= maximumT;
+            std::sort(parameters.begin(), parameters.end());
+            parameters.erase(std::unique(parameters.begin(), parameters.end(),
+                [](double firstParameter, double secondParameter) {
+                    return std::abs(firstParameter - secondParameter) <= 1.0e-10;
+                }), parameters.end());
+            for(std::size_t index = 1; index < parameters.size(); ++index) {
+                const double minimumT = parameters[index - 1];
+                const double maximumT = parameters[index];
+                if(maximumT - minimumT <= 1.0e-12) {
+                    continue;
+                }
+                const double midpointT = (minimumT + maximumT) * 0.5;
+                if(selection.contains(first + midpointT * delta)) {
+                    intervals.emplace_back(minimumT, maximumT);
+                }
+            }
+            return intervals;
         }
 
     }
@@ -125,10 +180,37 @@ namespace spraythickness::opengl
         if(!enabled) {
             return true;
         }
-        return point.x() >= std::min(minimum.x(), maximum.x())
-            && point.x() <= std::max(minimum.x(), maximum.x())
-            && point.y() >= std::min(minimum.y(), maximum.y())
-            && point.y() <= std::max(minimum.y(), maximum.y());
+        const Eigen::Vector2d boundsMinimum = minimum.cwiseMin(maximum);
+        const Eigen::Vector2d boundsMaximum = minimum.cwiseMax(maximum);
+        if(point.x() < boundsMinimum.x() || point.x() > boundsMaximum.x()
+            || point.y() < boundsMinimum.y() || point.y() > boundsMaximum.y()) {
+            return false;
+        }
+        if(polygon.size() < 3) {
+            return true;
+        }
+        bool inside = false;
+        constexpr double epsilon = 1.0e-10;
+        for(std::size_t index = 0; index < polygon.size(); ++index) {
+            const Eigen::Vector2d first = polygon[index];
+            const Eigen::Vector2d second = polygon[(index + 1) % polygon.size()];
+            const Eigen::Vector2d edge = second - first;
+            const Eigen::Vector2d relative = point - first;
+            if(std::abs(cross2d(edge, relative)) <= epsilon
+                && relative.dot(point - second) <= epsilon) {
+                return true;
+            }
+            const bool crosses = (first.y() > point.y()) != (second.y() > point.y());
+            if(crosses) {
+                const double xAtPoint = first.x()
+                    + (second.x() - first.x()) * (point.y() - first.y())
+                        / (second.y() - first.y());
+                if(point.x() < xAtPoint) {
+                    inside = !inside;
+                }
+            }
+        }
+        return inside;
     }
 
     AxisymmetricProfileSlice buildAxisymmetricProfileSlice(
@@ -430,26 +512,23 @@ namespace spraythickness::opengl
             for(std::size_t segment = 0; segment < segmentCount; ++segment) {
                 const AxisymmetricProfilePoint& first = source.points[segment];
                 const AxisymmetricProfilePoint& second = source.points[(segment + 1) % source.points.size()];
-                double minimumT = 0.0;
-                double maximumT = 1.0;
-                if(!clipSegmentToSelection(selection, first.sectionPosition,
-                    second.sectionPosition, minimumT, maximumT)
-                    || maximumT - minimumT <= 1.0e-12) {
-                    continue;
-                }
-                const AxisymmetricProfilePoint clippedFirst = interpolate(
-                    first, second, minimumT);
-                const AxisymmetricProfilePoint clippedSecond = interpolate(
-                    first, second, maximumT);
-                if(!contourPaths.empty()
-                    && (contourPaths.back().points.back().position - clippedFirst.position).norm()
-                        <= mergeTolerance) {
-                    contourPaths.back().points.push_back(clippedSecond);
-                } else {
-                    SelectedPath path;
-                    path.points.push_back(clippedFirst);
-                    path.points.push_back(clippedSecond);
-                    contourPaths.push_back(std::move(path));
+                const auto intervals = clipSegmentToSelection(
+                    selection, first.sectionPosition, second.sectionPosition);
+                for(const auto& interval : intervals) {
+                    const AxisymmetricProfilePoint clippedFirst = interpolate(
+                        first, second, interval.first);
+                    const AxisymmetricProfilePoint clippedSecond = interpolate(
+                        first, second, interval.second);
+                    if(!contourPaths.empty()
+                        && (contourPaths.back().points.back().position - clippedFirst.position).norm()
+                            <= mergeTolerance) {
+                        contourPaths.back().points.push_back(clippedSecond);
+                    } else {
+                        SelectedPath path;
+                        path.points.push_back(clippedFirst);
+                        path.points.push_back(clippedSecond);
+                        contourPaths.push_back(std::move(path));
+                    }
                 }
             }
             for(SelectedPath& path : contourPaths) {

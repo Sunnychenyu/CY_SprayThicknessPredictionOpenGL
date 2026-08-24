@@ -44,6 +44,9 @@ namespace spraythickness::opengl
         bool enabled{ false };
         Eigen::Vector2d minimum = Eigen::Vector2d::Zero();
         Eigen::Vector2d maximum = Eigen::Vector2d::Zero();
+        // Closed section-space boundary. The legacy bounds remain populated
+        // as its envelope for compatibility with existing callers.
+        std::vector<Eigen::Vector2d> polygon;
 
         bool contains(const Eigen::Vector2d& point) const;
     };

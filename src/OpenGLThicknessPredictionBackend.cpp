@@ -1,6 +1,7 @@
 #include <SprayThicknessPredictionOpenGL/OpenGLThicknessPredictionBackend.h>
 
 #include <SprayThicknessPredictionOpenGL/ThicknessBvh.h>
+#include <SprayThicknessPredictionOpenGL/AxisymmetricProfileReduction.h>
 
 #include "OpenGLComputeProgram.h"
 #include "PaperGaussianHistoryShader.h"
@@ -320,24 +321,22 @@ namespace spraythickness::opengl
             tangentialDirection = tangentialDirection.squaredNorm() > 1.0e-16
                 ? tangentialDirection.normalized()
                 : Eigen::Vector3d::UnitZ();
-            const Eigen::Vector2d selectionMinimum = profile.selectionMinimum.cwiseMin(
-                profile.selectionMaximum);
-            const Eigen::Vector2d selectionMaximum = profile.selectionMinimum.cwiseMax(
-                profile.selectionMaximum);
+            AxisymmetricProfileSelection selection;
+            selection.enabled = true;
+            selection.minimum = profile.selectionMinimum;
+            selection.maximum = profile.selectionMaximum;
+            selection.polygon = profile.selectionPolygon;
             parallelForVertexRanges(bindings.size(),
                 [&workpiece, &bindings, &segmentBvh, axisOrigin, axisDirection,
-                    radialDirection, tangentialDirection, selectionMinimum,
-                    selectionMaximum](std::size_t first, std::size_t last) {
+                    radialDirection, tangentialDirection, selection](
+                    std::size_t first, std::size_t last) {
                     for(std::size_t vertex = first; vertex < last; ++vertex) {
                         const Eigen::Vector3d relative =
                             workpiece.samples[vertex].position - axisOrigin;
                         const double axial = relative.dot(axisDirection);
                         const Eigen::Vector3d radial = relative - axial * axisDirection;
                         const Eigen::Vector2d sectionPoint(radial.norm(), axial);
-                        if(sectionPoint.x() < selectionMinimum.x()
-                            || sectionPoint.x() > selectionMaximum.x()
-                            || sectionPoint.y() < selectionMinimum.y()
-                            || sectionPoint.y() > selectionMaximum.y()) {
+                        if(!selection.contains(sectionPoint)) {
                             continue;
                         }
 
@@ -447,6 +446,11 @@ namespace spraythickness::opengl
             append(profile.axisDirection.data(), sizeof(double) * 3);
             append(profile.selectionMinimum.data(), sizeof(double) * 2);
             append(profile.selectionMaximum.data(), sizeof(double) * 2);
+            const std::size_t polygonSize = profile.selectionPolygon.size();
+            append(&polygonSize, sizeof(polygonSize));
+            for(const Eigen::Vector2d& point : profile.selectionPolygon) {
+                append(point.data(), sizeof(double) * 2);
+            }
             for(const auto& segment : profile.sampleSegments) {
                 append(&segment.firstSampleIndex, sizeof(segment.firstSampleIndex));
                 append(&segment.secondSampleIndex, sizeof(segment.secondSampleIndex));
@@ -1735,6 +1739,18 @@ namespace spraythickness::opengl
                 }
                 predictionWarnings.push_back(
                     "Axisymmetric profile prediction maps sampled profile thickness back to the complete mesh.");
+            } else if(!task.options.spatialFiltering.predictionVertexIndices.empty()) {
+                predictionVertexIndices = task.options.spatialFiltering.predictionVertexIndices;
+                std::vector<std::uint8_t> seen(task.workpiece.samples.size(), 0U);
+                for(const std::uint32_t vertex : predictionVertexIndices) {
+                    if(vertex >= task.workpiece.samples.size() || seen[vertex] != 0U) {
+                        throw std::runtime_error(
+                            "Restricted spatial prediction vertex list is invalid.");
+                    }
+                    seen[vertex] = 1U;
+                }
+                predictionWarnings.push_back(
+                    "Restricted local vertex prediction was used; vertices outside the selected region remain zero.");
             } else {
                 predictionVertexIndices.resize(task.workpiece.samples.size());
                 std::iota(predictionVertexIndices.begin(), predictionVertexIndices.end(), 0U);
@@ -1869,6 +1885,11 @@ namespace spraythickness::opengl
                 for(std::size_t predictionVertex = 0;
                     predictionVertex < predictionVertexIndices.size();
                     ++predictionVertex) {
+                    const std::uint32_t sourceVertex = predictionVertexIndices[predictionVertex];
+                    if(sourceVertex >= computationWorkpiece.samples.size()
+                        || !computationWorkpiece.samples[sourceVertex].valid) {
+                        continue;
+                    }
                     if(predictionVertex >= grid.vertexCellIndices.size()) {
                         continue;
                     }
@@ -2336,7 +2357,9 @@ namespace spraythickness::opengl
                         + std::to_string(profile.selectionMinimum.x()) + ","
                         + std::to_string(profile.selectionMaximum.x()) + "], z=["
                         + std::to_string(profile.selectionMinimum.y()) + ","
-                        + std::to_string(profile.selectionMaximum.y()) + "]").c_str());
+                        + std::to_string(profile.selectionMaximum.y())
+                        + "], polygonPoints="
+                        + std::to_string(profile.selectionPolygon.size())).c_str());
                 std::vector<float> expandedThickness;
                 expandAxisymmetricProfileThickness(
                     *fullVertexBindings,
