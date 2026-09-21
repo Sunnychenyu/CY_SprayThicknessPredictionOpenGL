@@ -649,7 +649,12 @@ namespace spraythickness::opengl
             if(axis.norm() <= 1.0e-12) {
                 axis = fallback - fallback.dot(direction) * direction;
             }
-            return axis.norm() > 1.0e-12 ? axis.normalized() : Eigen::Vector3d::UnitY();
+            if(axis.norm() <= 1.0e-12) {
+                const Eigen::Vector3d canonical = std::abs(direction.x()) < 0.9
+                    ? Eigen::Vector3d::UnitX() : Eigen::Vector3d::UnitY();
+                axis = canonical - canonical.dot(direction) * direction;
+            }
+            return axis.normalized();
         }
 
         ClosestTriangle findClosestTriangle(
@@ -1434,8 +1439,10 @@ namespace spraythickness::opengl
             const Eigen::Isometry3d toolPose = sample.tcpPose * task.tool.T_link_tool;
             const Eigen::Vector3d direction =
                 task.tool.worldSprayDirection(toolPose).normalized();
+            const Eigen::Vector3d preferredMajor =
+                toolPose.linear() * task.tool.powderFeedDirectionLocal;
             const Eigen::Vector3d major = orthogonalAxis(
-                toolPose.linear().col(0), direction, toolPose.linear().col(1));
+                preferredMajor, direction, toolPose.linear().col(1));
             Eigen::Vector3d minor = direction.cross(major);
             if(minor.norm() <= 1.0e-12) {
                 minor = orthogonalAxis(
