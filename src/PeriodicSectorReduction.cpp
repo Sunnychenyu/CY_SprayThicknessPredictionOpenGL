@@ -1431,7 +1431,7 @@ namespace spraythickness::opengl
 
             const double duration = index + 1 < trajectorySamples.size()
                 ? std::max(0.0, trajectorySamples[index + 1].time - sample.time)
-                : (trajectorySamples.size() == 1 ? 1.0 : 0.0);
+                : 0.0;
             if(duration <= 0.0) {
                 continue;
             }
