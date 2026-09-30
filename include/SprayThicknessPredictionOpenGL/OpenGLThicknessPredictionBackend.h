@@ -19,6 +19,11 @@ namespace spraythickness::opengl
             const ThicknessPredictionTask& task,
             const ThicknessPredictionExecution& execution = {}) override;
 
+        void beginOnline(ThicknessPredictionTask task);
+        ThicknessPredictionResult appendOnline(
+            const spraytrajectory::SprayTrajectory& trajectory);
+        void endOnline();
+
     private:
         struct Impl;
         std::unique_ptr<Impl> m_impl;

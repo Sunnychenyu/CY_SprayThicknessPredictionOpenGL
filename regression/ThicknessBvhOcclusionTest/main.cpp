@@ -73,6 +73,48 @@ namespace
         return top > 0.0 && lowerBefore > 0.0
             && std::abs(lowerAfter) < 1.0e-12;
     }
+
+    bool verifyOnlineAccumulation()
+    {
+        spraythickness::ThicknessPredictionTask task = makeTask(false, true);
+        task.options.enableHistoryCorrection = true;
+        auto& points = task.trajectory.segments.front().points;
+        points.front().sprayEnabled = true;
+        points.back().sprayEnabled = true;
+        spraytrajectory::SprayPathPoint end = points.back();
+        end.time = 0.04;
+        end.sprayEnabled = false;
+        points.push_back(end);
+
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        const auto offline = backend.predict(task);
+        spraythickness::ThicknessPredictionTask onlineTask = task;
+        onlineTask.trajectory = spraytrajectory::SprayTrajectory();
+        backend.beginOnline(std::move(onlineTask));
+
+        spraytrajectory::SprayTrajectory first;
+        first.segments.push_back(task.trajectory.segments.front());
+        first.segments.front().points.resize(2);
+        const auto firstResult = backend.appendOnline(first);
+
+        spraytrajectory::SprayTrajectory second;
+        second.segments.push_back(task.trajectory.segments.front());
+        second.segments.front().points.erase(
+            second.segments.front().points.begin());
+        const auto finalResult = backend.appendOnline(second);
+        backend.endOnline();
+
+        const double firstTop = firstResult.field.results[4].thickness;
+        const double finalTop = finalResult.field.results[4].thickness;
+        const double offlineTop = offline.field.results[4].thickness;
+        const double lower = finalResult.field.results[13].thickness;
+        std::cout << "online first=" << firstTop << " final=" << finalTop
+                  << " offline=" << offlineTop << " lower=" << lower << '\n';
+        return firstTop > 0.0 && finalTop > firstTop
+            && std::abs(finalTop - offlineTop)
+                < std::max(offlineTop * 1.0e-4, 1.0e-12)
+            && std::abs(lower) < 1.0e-12;
+    }
 }
 
 int main(int argc, char** argv)
@@ -91,7 +133,12 @@ int main(int argc, char** argv)
         return 77;
     }
     try {
-        return verifyOcclusion(false) && verifyOcclusion(true) ? 0 : 1;
+        std::cerr << "Checking complete-mesh occlusion..." << std::endl;
+        const bool complete = verifyOcclusion(false);
+        std::cerr << "Checking spatial occlusion..." << std::endl;
+        const bool spatial = verifyOcclusion(true);
+        std::cerr << "Checking online accumulation..." << std::endl;
+        return complete && spatial && verifyOnlineAccumulation() ? 0 : 1;
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
