@@ -50,6 +50,9 @@ if(BuildTests)
     add_subdirectory(
         regression/SpatialInfluenceFilteringTest
         ${PROJECT_BINARY_DIR}/tests/spatial_influence_filtering)
+    add_subdirectory(
+        regression/ThicknessBvhOcclusionTest
+        ${PROJECT_BINARY_DIR}/tests/thickness_bvh_occlusion)
 endif()
 
 set_target_properties(${TARGET_NAME} PROPERTIES

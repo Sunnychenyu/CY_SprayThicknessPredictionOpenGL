@@ -81,15 +81,21 @@ bool rayBox(
     vec3 maximum,
     float rayLength)
 {
-    // This is the inverse ray direction used by the legacy BVH shader.
-    // Do not invert it a second time: sign(dir) / abs(dir) is already 1 / dir.
-    vec3 inverseDirection = sign(direction) / max(abs(direction), vec3(1e-8));
-    vec3 t0 = (minimum - origin) * inverseDirection;
-    vec3 t1 = (maximum - origin) * inverseDirection;
-    vec3 nearValue = min(t0, t1);
-    vec3 farValue = max(t0, t1);
-    float nearDistance = max(max(nearValue.x, nearValue.y), nearValue.z);
-    float farDistance = min(min(farValue.x, farValue.y), farValue.z);
+    float nearDistance = 0.0;
+    float farDistance = rayLength;
+    for(int axis = 0; axis < 3; ++axis) {
+        if(direction[axis] == 0.0) {
+            if(origin[axis] < minimum[axis] || origin[axis] > maximum[axis]) {
+                return false;
+            }
+            continue;
+        }
+        float t0 = (minimum[axis] - origin[axis]) / direction[axis];
+        float t1 = (maximum[axis] - origin[axis]) / direction[axis];
+        nearDistance = max(nearDistance, min(t0, t1));
+        farDistance = min(farDistance, max(t0, t1));
+        if(nearDistance >= farDistance) return false;
+    }
     return farDistance > shadowBiasMm
         && nearDistance < farDistance
         && nearDistance < rayLength;
