@@ -115,6 +115,40 @@ namespace
                 < std::max(offlineTop * 1.0e-4, 1.0e-12)
             && std::abs(lower) < 1.0e-12;
     }
+
+    bool verifyPausedOnlineAccumulation()
+    {
+        spraythickness::ThicknessPredictionTask task = makeTask(false, true);
+        task.trajectory = spraytrajectory::SprayTrajectory();
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        backend.beginOnline(std::move(task));
+
+        auto interval = [](double start) {
+            spraytrajectory::SprayTrajectory trajectory;
+            spraytrajectory::SpraySegment segment;
+            segment.processId = "occlusion-test";
+            for(const double time : { start, start + 0.02 }) {
+                spraytrajectory::SprayPathPoint point;
+                point.time = time;
+                point.tcpPose.translation() = Eigen::Vector3d(0.0, 0.0, 0.12);
+                point.sprayEnabled = true;
+                segment.points.push_back(point);
+            }
+            trajectory.segments.push_back(std::move(segment));
+            return trajectory;
+        };
+        const auto first = backend.appendOnline(interval(0.0));
+        const auto second = backend.appendOnline(interval(1.0));
+        backend.endOnline();
+
+        const double firstTop = first.field.results[4].thickness;
+        const double secondTop = second.field.results[4].thickness;
+        std::cout << "online paused first=" << firstTop
+                  << " final=" << secondTop << '\n';
+        return firstTop > 0.0
+            && std::abs(secondTop - 2.0 * firstTop)
+                < std::max(firstTop * 1.0e-4, 1.0e-12);
+    }
 }
 
 int main(int argc, char** argv)
@@ -133,12 +167,14 @@ int main(int argc, char** argv)
         return 77;
     }
     try {
+        std::cerr << "Checking paused online accumulation..." << std::endl;
+        const bool paused = verifyPausedOnlineAccumulation();
         std::cerr << "Checking complete-mesh occlusion..." << std::endl;
         const bool complete = verifyOcclusion(false);
         std::cerr << "Checking spatial occlusion..." << std::endl;
         const bool spatial = verifyOcclusion(true);
         std::cerr << "Checking online accumulation..." << std::endl;
-        return complete && spatial && verifyOnlineAccumulation() ? 0 : 1;
+        return paused && complete && spatial && verifyOnlineAccumulation() ? 0 : 1;
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
