@@ -7,6 +7,7 @@
 #include <QSurfaceFormat>
 
 #include <cmath>
+#include <algorithm>
 #include <iostream>
 
 namespace
@@ -116,6 +117,155 @@ namespace
             && std::abs(lower) < 1.0e-12;
     }
 
+    bool verifyOnlineBatchPartition(bool history)
+    {
+        auto task = makeTask(false, true);
+        for(std::size_t index = 0; index < task.workpiece.samples.size(); ++index) {
+            task.workpiece.samples[index].targetThickness = 0.00004 + index * 1.0e-7;
+        }
+        task.options.enableHistoryCorrection = history;
+        auto& points = task.trajectory.segments.front().points;
+        const auto prototype = points.front();
+        points.clear();
+        for(int index = 0; index <= 21; ++index) {
+            auto point = prototype;
+            point.time = index == 21 ? 0.415 : index * 0.02;
+            point.tcpPose.translation().x() = -0.004 + index * 0.0004;
+            point.sprayEnabled = index < 21;
+            points.push_back(point);
+        }
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        const auto offline = backend.predict(task);
+        for(std::size_t batchSize : { std::size_t(2), std::size_t(13) }) {
+            auto onlineTask = task;
+            onlineTask.trajectory = {};
+            backend.beginOnline(std::move(onlineTask));
+            spraythickness::ThicknessPredictionResult final;
+            for(std::size_t begin = 0; begin + 1 < points.size();) {
+                const auto end = std::min(begin + batchSize, points.size() - 1);
+                spraytrajectory::SprayTrajectory interval;
+                auto segment = task.trajectory.segments.front();
+                segment.points.assign(points.begin() + begin, points.begin() + end + 1);
+                interval.segments.push_back(std::move(segment));
+                backend.appendOnline(interval, final);
+                begin = end;
+            }
+            backend.endOnline();
+            for(std::size_t index = 0; index < offline.field.results.size(); ++index) {
+                const double expected = offline.field.results[index].thickness;
+                if(std::abs(final.field.results[index].thickness - expected)
+                    > std::max(expected * 1.0e-4, 1.0e-12)) return false;
+                if(final.field.results[index].sampleIndex != index
+                    || final.field.results[index].targetThickness
+                        != task.workpiece.samples[index].targetThickness
+                    || std::abs(final.field.results[index].error
+                        - (final.field.results[index].thickness
+                            - task.workpiece.samples[index].targetThickness)) > 1.0e-15) return false;
+            }
+            if(final.timing.sprayPointCount != 21 || final.field.results[13].thickness != 0.0
+                || !std::isfinite(final.timing.pureGpuMilliseconds)
+                || final.timing.readbackMilliseconds < 0.0) return false;
+            std::cout << "online partition: history=" << history << " batch=" << batchSize
+                << " top=" << final.field.results[4].thickness
+                << " gpuMs=" << final.timing.pureGpuMilliseconds << '\n';
+        }
+        // Reusing a result of the same size after Begin must use the new targets.
+        auto resetTask = task;
+        for(auto& sample : resetTask.workpiece.samples) sample.targetThickness = 0.0001;
+        backend.beginOnline(std::move(resetTask));
+        auto reused = offline;
+        backend.appendOnline(task.trajectory, reused);
+        for(const auto& sample : reused.field.results) {
+            if(sample.targetThickness != 0.0001
+                || std::abs(sample.error - (sample.thickness - 0.0001)) > 1.0e-15) return false;
+        }
+        backend.endOnline();
+        return true;
+    }
+
+    bool verifyNarrowFootprintOcclusion()
+    {
+        auto task = makeTask(false, true);
+        task.options.enableHistoryCorrection = true;
+        task.options.deposition.sigmaPhiRadians = 0.001;
+        task.options.deposition.sigmaPsiRadians = 0.001;
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        const auto shadowed = backend.predict(task);
+        task.options.enableBvhOcclusion = false;
+        const auto visible = backend.predict(task);
+        if(shadowed.field.results[4].thickness <= 0.0
+            || visible.field.results[13].thickness <= 0.0
+            || shadowed.field.results[13].thickness != 0.0) return false;
+        for(std::size_t i = 0; i < shadowed.field.results.size(); ++i) {
+            if(i != 4 && i != 13 && (shadowed.field.results[i].thickness != 0.0
+                || visible.field.results[i].thickness != 0.0)) return false;
+        }
+        return true;
+    }
+
+    bool verifyOnlineSnapshot()
+    {
+        auto task = makeTask(false, true);
+        task.options.enableHistoryCorrection = true;
+        for(std::size_t i = 0; i < task.workpiece.samples.size(); ++i) {
+            task.workpiece.samples[i].targetThickness = 1.0e-5 + i * 1.0e-6;
+        }
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        backend.beginOnline(task);
+        spraythickness::OnlineThicknessSnapshot compact;
+        backend.appendOnline(task.trajectory, compact);
+        const auto retained = compact;
+        // Requesting a full result without adding spray must see the same data.
+        const auto full = backend.appendOnline({});
+        if(compact.size() != full.field.results.size()) return false;
+        for(std::size_t i = 0; i < compact.size(); ++i) {
+            if(compact.thicknessMeters(i) != full.field.results[i].thickness) return false;
+        }
+        if(compact.metrics.averageThickness != full.metrics.averageThickness
+            || compact.metrics.maxThickness != full.metrics.maxThickness
+            || compact.metrics.meanError != full.metrics.meanError
+            || compact.metrics.coverageRatio != full.metrics.coverageRatio
+            || compact.timing.sprayPointCount != full.timing.sprayPointCount) return false;
+        auto next = task.trajectory;
+        for(auto& point : next.segments.front().points) point.time += 0.02;
+        backend.appendOnline(next, compact);
+        if(compact.thicknessMeters(4) <= retained.thicknessMeters(4)
+            || compact.thicknessMeters(13) != 0.0) return false;
+        backend.endOnline();
+        backend.beginOnline(task);
+        backend.appendOnline({}, compact);
+        return compact.metrics.maxThickness == 0.0 && compact.timing.sprayPointCount == 0;
+    }
+
+    bool verifyShortIntervalExposure()
+    {
+        // Adaptive integration and the last interval of a frame can be shorter
+        // than a microsecond. Subdivision must not manufacture extra spray time.
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        double coarse = 0.0;
+        for(int count : { 1, 32 }) {
+            auto task = makeTask(false, true);
+            auto& points = task.trajectory.segments.front().points;
+            const auto prototype = points.front();
+            points.clear();
+            for(int index = 0; index <= count; ++index) {
+                auto point = prototype;
+                point.time = 4.0e-6 * index / count;
+                points.push_back(point);
+            }
+            const auto trajectory = task.trajectory;
+            task.trajectory = {};
+            backend.beginOnline(std::move(task));
+            const auto result = backend.appendOnline(trajectory);
+            backend.endOnline();
+            const double top = result.field.results[4].thickness;
+            if(top <= 0.0 || result.field.results[13].thickness != 0.0) return false;
+            if(count == 1) coarse = top;
+            else if(std::abs(top - coarse) > coarse * 1.0e-4) return false;
+        }
+        return true;
+    }
+
     bool verifyPausedOnlineAccumulation()
     {
         spraythickness::ThicknessPredictionTask task = makeTask(false, true);
@@ -174,7 +324,10 @@ int main(int argc, char** argv)
         std::cerr << "Checking spatial occlusion..." << std::endl;
         const bool spatial = verifyOcclusion(true);
         std::cerr << "Checking online accumulation..." << std::endl;
-        return paused && complete && spatial && verifyOnlineAccumulation() ? 0 : 1;
+        return paused && complete && spatial && verifyOnlineAccumulation()
+            && verifyOnlineBatchPartition(false) && verifyOnlineBatchPartition(true)
+            && verifyShortIntervalExposure() && verifyOnlineSnapshot()
+            && verifyNarrowFootprintOcclusion() ? 0 : 1;
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

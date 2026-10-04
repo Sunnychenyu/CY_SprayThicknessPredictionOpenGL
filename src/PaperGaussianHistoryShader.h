@@ -228,13 +228,9 @@ void main() {
         vec3 vertexToSprayDirection = -sprayToVertex / max(sprayDistance, 1.0e-6);
         float cosineIncidence = dot(normal, vertexToSprayDirection);
         if(cosineIncidence <= 0.0) continue;
-#if THICKNESS_ENABLE_BVH
-        if(isOccluded(
-            position,
-            vertexToSprayDirection,
-            sprayDistance)) continue;
-#endif
-
+        float pattern = patternValue(dot(sprayToVertex, majorAxis),
+            dot(sprayToVertex, minorAxis), axialDistance);
+        if(pattern <= 0.0) continue;
         float angleDegrees = 90.0 - degrees(acos(clamp(cosineIncidence, -1.0, 1.0)));
         float projection = max(1e-6, cosineIncidence);
         float distanceSquared = max(dot(sprayToVertex, sprayToVertex), 1.0e-12);
@@ -244,12 +240,14 @@ void main() {
             / referenceDistanceEfficiency;
         float angleScale = angleEfficiency(angleDegrees) / referenceAngleEfficiency;
         float peak = peakScale * geometryScale * distanceScale * angleScale
-            * max(1e-6, dt);
-        float baseThickness = peak * patternValue(
-            dot(sprayToVertex, majorAxis),
-            dot(sprayToVertex, minorAxis),
-            axialDistance);
+            * dt;
+        float baseThickness = peak * pattern;
         if(baseThickness <= 0.0) continue;
+#if THICKNESS_ENABLE_BVH
+        // Visibility cannot change an exactly zero contribution. Reject it
+        // before traversing the full mesh; do not introduce a Gaussian cutoff.
+        if(isOccluded(position, vertexToSprayDirection, sprayDistance)) continue;
+#endif
 
 #if THICKNESS_ENABLE_HISTORY
         {

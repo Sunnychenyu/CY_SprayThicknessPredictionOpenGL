@@ -22,9 +22,15 @@ namespace spraythickness::opengl
         void beginOnline(ThicknessPredictionTask task);
         ThicknessPredictionResult appendOnline(
             const spraytrajectory::SprayTrajectory& trajectory);
+        void appendOnline(const spraytrajectory::SprayTrajectory& trajectory,
+            ThicknessPredictionResult& result);
+        void appendOnline(const spraytrajectory::SprayTrajectory& trajectory,
+            OnlineThicknessSnapshot& snapshot);
         void endOnline();
 
     private:
+        void appendOnlineImpl(const spraytrajectory::SprayTrajectory& trajectory,
+            ThicknessPredictionResult* result, OnlineThicknessSnapshot* snapshot);
         struct Impl;
         std::unique_ptr<Impl> m_impl;
     };
