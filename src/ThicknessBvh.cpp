@@ -1,13 +1,79 @@
 #include <SprayThicknessPredictionOpenGL/ThicknessBvh.h>
 
-#include <Eigen/Core>
+#include <Eigen/Geometry>
 
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <queue>
+#include <cmath>
 
 namespace spraythickness::opengl
 {
+    double ThicknessBvh::surfaceDistance(const sprayworkpiece::WorkpieceModel& workpiece,
+        const Eigen::Vector3d& position) const
+    {
+        if(empty()) return std::numeric_limits<double>::infinity();
+        const auto triangleDistanceSquared = [&](const Eigen::Vector3d& a,
+            const Eigen::Vector3d& b, const Eigen::Vector3d& c) {
+            const Eigen::Vector3d ab = b - a, ac = c - a, ap = position - a;
+            const Eigen::Vector3d normal = ab.cross(ac);
+            const double areaSquared = normal.squaredNorm();
+            if(areaSquared > 1.0e-30) {
+                const double u = ap.cross(ac).dot(normal) / areaSquared;
+                const double v = ab.cross(ap).dot(normal) / areaSquared;
+                if(u >= 0.0 && v >= 0.0 && u + v <= 1.0)
+                    return std::pow(ap.dot(normal), 2) / areaSquared;
+            }
+            const auto edgeDistance = [&](const Eigen::Vector3d& from, const Eigen::Vector3d& to) {
+                const Eigen::Vector3d edge = to - from;
+                const double length = edge.squaredNorm();
+                const double t = length > 0.0
+                    ? std::clamp((position - from).dot(edge) / length, 0.0, 1.0) : 0.0;
+                return (position - from - t * edge).squaredNorm();
+            };
+            return std::min({ edgeDistance(a, b), edgeDistance(b, c), edgeDistance(c, a) });
+        };
+        const auto boundDistance = [&](std::int32_t index) {
+            const auto& node = nodes[index];
+            double distance = 0.0;
+            for(int axis = 0; axis < 3; ++axis) {
+                const double delta = std::max({ 0.0,
+                    node.minimum[axis] * 0.001 - position[axis],
+                    position[axis] - node.maximum[axis] * 0.001 });
+                distance += delta * delta;
+            }
+            return distance;
+        };
+        using Entry = std::pair<double, std::int32_t>;
+        std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> pending;
+        pending.emplace(boundDistance(0), 0);
+        double best = std::numeric_limits<double>::infinity();
+        while(!pending.empty()) {
+            const auto entry = pending.top();
+            pending.pop();
+            if(entry.first >= best) break;
+            const auto& node = nodes[entry.second];
+            if(node.triangleCount > 0) {
+                for(int i = 0; i < node.triangleCount; ++i) {
+                    const auto triangle = triangleOrder[node.firstTriangle + i] * 3;
+                    const auto& indices = workpiece.triangleIndices;
+                    best = std::min(best, triangleDistanceSquared(
+                        workpiece.samples[indices[triangle]].position,
+                        workpiece.samples[indices[triangle + 1]].position,
+                        workpiece.samples[indices[triangle + 2]].position));
+                }
+            } else {
+                for(const auto child : { node.leftChild, node.rightChild }) {
+                    if(child < 0) continue;
+                    const double distance = boundDistance(child);
+                    if(distance < best) pending.emplace(distance, child);
+                }
+            }
+        }
+        return std::sqrt(best);
+    }
+
     namespace
     {
         struct TriangleBounds

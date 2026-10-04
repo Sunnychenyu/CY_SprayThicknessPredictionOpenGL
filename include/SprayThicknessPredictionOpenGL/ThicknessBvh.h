@@ -25,6 +25,9 @@ namespace spraythickness::opengl
         std::vector<std::uint32_t> triangleOrder;
 
         bool empty() const { return nodes.empty(); }
+        // Exact nearest triangle distance in meters; the stored node bounds are millimeters.
+        double surfaceDistance(const sprayworkpiece::WorkpieceModel& workpiece,
+            const Eigen::Vector3d& position) const;
     };
 
     using ThicknessBvhProgress = std::function<void(

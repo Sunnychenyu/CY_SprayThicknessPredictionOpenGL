@@ -1361,9 +1361,16 @@ namespace spraythickness::opengl
             ~GpuBuffer() { if(m_id != 0) glDeleteBuffers(1, &m_id); }
             GpuBuffer(const GpuBuffer&) = delete;
             GpuBuffer& operator=(const GpuBuffer&) = delete;
+            std::size_t size() const { return m_size; }
+
+            void bind(unsigned int binding) const
+            {
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, m_id);
+            }
 
             void upload(unsigned int binding, const void* data, std::size_t size, unsigned int usage)
             {
+                m_size = size;
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_id);
                 if(size > m_capacity) {
                     glBufferData(
@@ -1397,6 +1404,7 @@ namespace spraythickness::opengl
         private:
             unsigned int m_id{ 0 };
             std::size_t m_capacity{ 0 };
+            std::size_t m_size{ 0 };
         };
 
         class GpuElapsedQuery
@@ -2493,16 +2501,124 @@ namespace spraythickness::opengl
         }
     }
 
+    namespace
+    {
+        constexpr std::size_t kOnlineStatisticsGroups = 64;
+        // std430: ten consecutive doubles, no trailing struct padding.
+        struct OnlinePartialStatistics
+        {
+            double count, minimum, maximum, mean, m2;
+            double errorSum, maxAbsError, covered, under, over;
+        };
+        static_assert(sizeof(OnlinePartialStatistics) == 80, "GPU statistics layout");
+
+        constexpr const char* kOnlineDisplayCopy = R"glsl(
+#version 430 core
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer Thickness { float thickness[]; };
+layout(std430, binding = 1) readonly buffer Mapping { uint indices[]; };
+layout(std430, binding = 2) writeonly buffer Display { float display[]; };
+uniform int count;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < uint(count)) display[i] = thickness[indices[i]];
+}
+)glsl";
+
+        constexpr const char* kOnlineStatistics = R"glsl(
+#version 430 core
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer Thickness { float thickness[]; };
+layout(std430, binding = 1) readonly buffer Targets { double targets[]; };
+struct Statistics {
+    double count, minimum, maximum, mean, m2;
+    double errorSum, maxAbsError, covered, under, over;
+};
+layout(std430, binding = 2) writeonly buffer Partials { Statistics partials[]; };
+uniform int count;
+uniform bool fullStatistics;
+uniform double coverageTolerance;
+uniform double overCoatTolerance;
+shared Statistics localStats[256];
+Statistics mergeStats(Statistics a, Statistics b) {
+    if (b.count == 0.0) return a;
+    if (a.count == 0.0) return b;
+    double n = a.count + b.count;
+    if (!fullStatistics) {
+        a.count = n;
+        a.minimum = min(a.minimum, b.minimum);
+        a.maximum = max(a.maximum, b.maximum);
+        return a;
+    }
+    double delta = b.mean - a.mean;
+    a.m2 += b.m2 + delta * delta * a.count * b.count / n;
+    a.mean += delta * b.count / n;
+    a.count = n;
+    a.minimum = min(a.minimum, b.minimum);
+    a.maximum = max(a.maximum, b.maximum);
+    a.errorSum += b.errorSum;
+    a.maxAbsError = max(a.maxAbsError, b.maxAbsError);
+    a.covered += b.covered;
+    a.under += b.under;
+    a.over += b.over;
+    return a;
+}
+void main() {
+    Statistics s = Statistics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    for (uint i = gl_GlobalInvocationID.x; i < uint(count);
+         i += gl_NumWorkGroups.x * gl_WorkGroupSize.x) {
+        float raw = thickness[i];
+        if (isnan(raw) || isinf(raw)) continue;
+        double value = double(raw) * 0.001lf;
+        if (!fullStatistics) {
+            if (s.count == 0.0) { s.minimum = value; s.maximum = value; }
+            s.minimum = min(s.minimum, value);
+            s.maximum = max(s.maximum, value);
+            s.count += 1.0;
+            continue;
+        }
+        double target = targets[i];
+        double error = value - target;
+        double lower = target - coverageTolerance;
+        double upper = target + overCoatTolerance;
+        Statistics sampleValue = Statistics(1.0, value, value, value, 0.0,
+            error, abs(error), value >= lower && value <= upper ? 1.0 : 0.0,
+            value < lower ? 1.0 : 0.0, value > upper ? 1.0 : 0.0);
+        s = mergeStats(s, sampleValue);
+    }
+    uint lane = gl_LocalInvocationID.x;
+    localStats[lane] = s;
+    barrier();
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        if (lane < stride) localStats[lane] = mergeStats(localStats[lane], localStats[lane + stride]);
+        barrier();
+    }
+    if (lane == 0) partials[gl_WorkGroupID.x] = localStats[0];
+}
+)glsl";
+    }
+
     struct OpenGLThicknessPredictionBackend::Impl
     {
         BackendGpuResources resources;
         GpuCapabilities capabilities;
         bool capabilitiesReady{ false };
-        std::optional<ThicknessPredictionTask> onlineTask;
+        std::shared_ptr<ThicknessPredictionTask> onlineTask;
+        std::shared_ptr<const ThicknessBvh> onlineBvh;
+        std::uint64_t onlineGeometryHash = 0;
+        OnlineThicknessSnapshot onlineLastStatistics;
         std::vector<float> onlineThickness;
         std::vector<double> onlineTargets;
         std::vector<std::unique_ptr<GpuElapsedQuery>> onlineQueries;
         std::size_t onlineSprayPointCount{ 0 };
+        std::unique_ptr<GpuBuffer> onlineDisplayIndices;
+        std::unique_ptr<GpuBuffer> onlineTargetBuffer;
+        std::unique_ptr<GpuBuffer> onlineStatisticsBuffer;
+        std::unique_ptr<OpenGLComputeProgram> onlineDisplayProgram;
+        std::unique_ptr<OpenGLComputeProgram> onlineStatisticsProgram;
+        std::unique_ptr<GpuElapsedQuery> onlineDisplayQuery;
+        std::unique_ptr<GpuElapsedQuery> onlineStatisticsQuery;
+        std::size_t onlineDisplayCount = 0;
 
         const GpuCapabilities& deviceCapabilities()
         {
@@ -2535,17 +2651,14 @@ namespace spraythickness::opengl
             throw std::runtime_error("An OpenGL 4.3 compute context is not current.");
         }
 
-        endOnline();
+        const auto geometryHash = hashWorkpieceGeometry(task.workpiece);
+        const bool reuseGeometry = m_impl->onlineTask && m_impl->onlineGeometryHash == geometryHash;
         const std::size_t vertexCount = task.workpiece.samples.size();
-        const auto surfaceData = makeSurfaceData(task.workpiece);
-        const auto surfacePositions = makeSurfacePositionData(task.workpiece);
-        const std::shared_ptr<const ThicknessBvh> bvh = task.options.enableBvhOcclusion
-            ? cachedBvh(task.workpiece, {})
-            : std::make_shared<ThicknessBvh>();
+        // Also used by motion integration when occlusion is disabled.
+        const auto bvh = reuseGeometry ? m_impl->onlineBvh : cachedBvh(task.workpiece, {});
         if(task.options.enableBvhOcclusion && bvh->empty()) {
             throw std::runtime_error("Failed to build the online workpiece BVH.");
         }
-        const LegacyGpuBvh legacyBvh = makeLegacyGpuBvh(*bvh);
         const LegacyGpuBvhNode dummyNode{};
         const std::uint32_t dummyIndex = 0;
         std::vector<float> thickness(vertexCount, 0.0f);
@@ -2553,21 +2666,28 @@ namespace spraythickness::opengl
         std::vector<float> lastUpdateTime(vertexCount, 0.0f);
         std::vector<float> historyFactor(vertexCount, 1.0f);
         BackendGpuResources& resources = m_impl->resources;
-        resources.buffer(0).upload(0, surfaceData.data(),
-            surfaceData.size() * sizeof(surfaceData.front()), GL_STATIC_DRAW);
+        if(!reuseGeometry) {
+            const auto surfaceData = makeSurfaceData(task.workpiece);
+            const auto surfacePositions = makeSurfacePositionData(task.workpiece);
+            const LegacyGpuBvh legacyBvh = makeLegacyGpuBvh(*bvh);
+            resources.buffer(0).upload(0, surfaceData.data(),
+                surfaceData.size() * sizeof(surfaceData.front()), GL_STATIC_DRAW);
+            resources.buffer(3).upload(3, task.workpiece.triangleIndices.data(),
+                task.workpiece.triangleIndices.size() * sizeof(std::uint32_t), GL_STATIC_DRAW);
+            resources.buffer(4).upload(4,
+                legacyBvh.nodes.empty() ? &dummyNode : legacyBvh.nodes.data(),
+                legacyBvh.nodes.empty() ? sizeof(dummyNode)
+                    : legacyBvh.nodes.size() * sizeof(LegacyGpuBvhNode), GL_STATIC_DRAW);
+            resources.buffer(5).upload(5,
+                legacyBvh.leafTriangleIndices.empty() ? &dummyIndex
+                    : legacyBvh.leafTriangleIndices.data(),
+                legacyBvh.leafTriangleIndices.empty() ? sizeof(dummyIndex)
+                    : legacyBvh.leafTriangleIndices.size() * sizeof(std::uint32_t), GL_STATIC_DRAW);
+            resources.buffer(10).upload(10, surfacePositions.data(),
+                surfacePositions.size() * sizeof(surfacePositions.front()), GL_STATIC_DRAW);
+        }
         resources.buffer(1).upload(1, thickness.data(),
             thickness.size() * sizeof(float), GL_DYNAMIC_COPY);
-        resources.buffer(3).upload(3, task.workpiece.triangleIndices.data(),
-            task.workpiece.triangleIndices.size() * sizeof(std::uint32_t), GL_STATIC_DRAW);
-        resources.buffer(4).upload(4,
-            legacyBvh.nodes.empty() ? &dummyNode : legacyBvh.nodes.data(),
-            legacyBvh.nodes.empty() ? sizeof(dummyNode)
-                : legacyBvh.nodes.size() * sizeof(LegacyGpuBvhNode), GL_STATIC_DRAW);
-        resources.buffer(5).upload(5,
-            legacyBvh.leafTriangleIndices.empty() ? &dummyIndex
-                : legacyBvh.leafTriangleIndices.data(),
-            legacyBvh.leafTriangleIndices.empty() ? sizeof(dummyIndex)
-                : legacyBvh.leafTriangleIndices.size() * sizeof(std::uint32_t), GL_STATIC_DRAW);
         resources.buffer(6).upload(6, historyTau.data(),
             historyTau.size() * sizeof(float), GL_DYNAMIC_COPY);
         resources.buffer(7).upload(7, lastUpdateTime.data(),
@@ -2575,8 +2695,6 @@ namespace spraythickness::opengl
         resources.buffer(8).upload(8, historyFactor.data(),
             historyFactor.size() * sizeof(float), GL_DYNAMIC_COPY);
         resources.buffer(9).upload(9, &dummyIndex, sizeof(dummyIndex), GL_STATIC_DRAW);
-        resources.buffer(10).upload(10, surfacePositions.data(),
-            surfacePositions.size() * sizeof(surfacePositions.front()), GL_STATIC_DRAW);
         checkOpenGlErrors("online input upload");
         // The targets stay fixed for this session. Read their compact array
         // during conversion instead of streaming the entire surface sample array.
@@ -2584,9 +2702,50 @@ namespace spraythickness::opengl
         for(std::size_t index = 0; index < task.workpiece.samples.size(); ++index) {
             m_impl->onlineTargets[index] = task.workpiece.samples[index].targetThickness;
         }
-        m_impl->onlineTask = std::move(task);
+        m_impl->onlineTask = std::make_shared<ThicknessPredictionTask>(std::move(task));
+        m_impl->onlineBvh = bvh;
+        m_impl->onlineGeometryHash = geometryHash;
+        m_impl->onlineLastStatistics = {};
+        m_impl->onlineDisplayCount = 0;
+        // Compile before the first physical interval arrives.
+        m_impl->resources.program(false, m_impl->onlineTask->options.enableBvhOcclusion,
+            m_impl->onlineTask->options.enableHistoryCorrection);
         m_impl->onlineThickness = std::move(thickness);
         m_impl->onlineSprayPointCount = 0;
+    }
+
+    std::function<double(const Eigen::Vector3d&)>
+        OpenGLThicknessPredictionBackend::onlineSurfaceDistanceQuery() const
+    {
+        const auto task = m_impl->onlineTask;
+        const auto bvh = m_impl->onlineBvh;
+        return [task, bvh](const Eigen::Vector3d& position) {
+            return bvh->surfaceDistance(task->workpiece, position);
+        };
+    }
+
+    void OpenGLThicknessPredictionBackend::copyOnlineVisibilityGeometry(
+        const std::array<unsigned int, 4>& buffers)
+    {
+        if(!m_impl->onlineTask) throw std::runtime_error("Online geometry is not prepared.");
+        GLint previousRead = 0, previousWrite = 0;
+        glGetIntegerv(GL_COPY_READ_BUFFER_BINDING, &previousRead);
+        glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING, &previousWrite);
+        const std::array<unsigned int, 4> bindings{ 3, 4, 5, 10 };
+        for(std::size_t i = 0; i < bindings.size(); ++i) {
+            m_impl->resources.buffer(bindings[i]).bind(bindings[i]);
+            GLint source = 0;
+            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, bindings[i], &source);
+            glBindBuffer(GL_COPY_READ_BUFFER, static_cast<GLuint>(source));
+            const auto bytes = m_impl->resources.buffer(bindings[i]).size();
+            glBindBuffer(GL_COPY_WRITE_BUFFER, buffers[i]);
+            glBufferData(GL_COPY_WRITE_BUFFER, static_cast<GLsizeiptr>(bytes), nullptr, GL_STATIC_COPY);
+            glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0,
+                static_cast<GLsizeiptr>(bytes));
+        }
+        glBindBuffer(GL_COPY_READ_BUFFER, static_cast<GLuint>(previousRead));
+        glBindBuffer(GL_COPY_WRITE_BUFFER, static_cast<GLuint>(previousWrite));
+        checkOpenGlErrors("online visibility geometry copy");
     }
 
     ThicknessPredictionResult OpenGLThicknessPredictionBackend::appendOnline(
@@ -2609,9 +2768,74 @@ namespace spraythickness::opengl
         appendOnlineImpl(trajectory, nullptr, &snapshot);
     }
 
+    void OpenGLThicknessPredictionBackend::setOnlineDisplayMapping(
+        const std::vector<std::uint32_t>& sampleIndices)
+    {
+        if(!m_impl->onlineTask || sampleIndices.empty()) {
+            throw std::runtime_error("Online display requires a model and vertex mapping.");
+        }
+        for(const auto index : sampleIndices) {
+            if(index >= m_impl->onlineTask->workpiece.samples.size()) {
+                throw std::runtime_error("Online display mapping references an invalid sample.");
+            }
+        }
+        m_impl->onlineDisplayIndices = std::make_unique<GpuBuffer>();
+        m_impl->onlineTargetBuffer = std::make_unique<GpuBuffer>();
+        m_impl->onlineStatisticsBuffer = std::make_unique<GpuBuffer>();
+        m_impl->onlineDisplayIndices->upload(0, sampleIndices.data(),
+            sampleIndices.size() * sizeof(std::uint32_t), GL_STATIC_DRAW);
+        m_impl->onlineTargetBuffer->upload(0, m_impl->onlineTargets.data(),
+            m_impl->onlineTargets.size() * sizeof(double), GL_STATIC_DRAW);
+        const std::array<OnlinePartialStatistics, kOnlineStatisticsGroups> empty{};
+        m_impl->onlineStatisticsBuffer->upload(0, empty.data(), sizeof(empty), GL_DYNAMIC_READ);
+        m_impl->onlineDisplayCount = sampleIndices.size();
+        if(!m_impl->onlineDisplayProgram) {
+            m_impl->onlineDisplayProgram = std::make_unique<OpenGLComputeProgram>(
+                kOnlineDisplayCopy, "Online display gather");
+        }
+        if(!m_impl->onlineStatisticsProgram) {
+            m_impl->onlineStatisticsProgram = std::make_unique<OpenGLComputeProgram>(
+                kOnlineStatistics, "Online thickness statistics");
+        }
+        if(!m_impl->onlineDisplayQuery) m_impl->onlineDisplayQuery = std::make_unique<GpuElapsedQuery>();
+        if(!m_impl->onlineStatisticsQuery) m_impl->onlineStatisticsQuery = std::make_unique<GpuElapsedQuery>();
+        checkOpenGlErrors("online display mapping upload");
+    }
+
+    void OpenGLThicknessPredictionBackend::setOnlineToolDirections(
+        const Eigen::Vector3d& sprayDirectionLocal, const Eigen::Vector3d& powderFeedDirectionLocal)
+    {
+        if(!m_impl->onlineTask) {
+            throw std::runtime_error("Online thickness prediction has not been started.");
+        }
+        if(!sprayDirectionLocal.allFinite() || !powderFeedDirectionLocal.allFinite()
+            || sprayDirectionLocal.squaredNorm() < 1.0e-12
+            || powderFeedDirectionLocal.squaredNorm() < 1.0e-12) {
+            throw std::runtime_error("Online tool directions must be finite and nonzero.");
+        }
+        const Eigen::Vector3d spray = sprayDirectionLocal.normalized();
+        const Eigen::Vector3d powder = powderFeedDirectionLocal.normalized();
+        if(spray.cross(powder).squaredNorm() < 1.0e-12) {
+            throw std::runtime_error("Online powder feed direction must not be parallel to the spray direction.");
+        }
+        m_impl->onlineTask->tool.sprayDirectionLocal = spray;
+        m_impl->onlineTask->tool.powderFeedDirectionLocal = powder;
+    }
+
+    void OpenGLThicknessPredictionBackend::appendOnlineGpu(
+        const spraytrajectory::SprayTrajectory& trajectory, unsigned int displayBuffer,
+        OnlineThicknessSnapshot& snapshot, const std::function<bool()>& canceled, bool fullStatistics)
+    {
+        if(displayBuffer == 0 || m_impl->onlineDisplayCount == 0) {
+            throw std::runtime_error("Online GPU display buffer or mapping is unavailable.");
+        }
+        appendOnlineImpl(trajectory, nullptr, &snapshot, displayBuffer, canceled, fullStatistics);
+    }
+
     void OpenGLThicknessPredictionBackend::appendOnlineImpl(
         const spraytrajectory::SprayTrajectory& trajectory,
-        ThicknessPredictionResult* result, OnlineThicknessSnapshot* snapshot)
+        ThicknessPredictionResult* result, OnlineThicknessSnapshot* snapshot,
+        unsigned int displayBuffer, const std::function<bool()>& canceled, bool fullStatistics)
     {
         if(!m_impl->onlineTask) {
             throw std::runtime_error("Online thickness prediction has not been started.");
@@ -2619,8 +2843,15 @@ namespace spraythickness::opengl
         const auto start = std::chrono::steady_clock::now();
         ThicknessPredictionTask& task = *m_impl->onlineTask;
         auto& thickness = snapshot ? snapshot->thicknessMillimeters : m_impl->onlineThickness;
-        thickness.resize(task.workpiece.samples.size());
+        if(displayBuffer) thickness.clear();
+        else thickness.resize(task.workpiece.samples.size());
         auto& timing = snapshot ? snapshot->timing : result->timing;
+        timing = {};
+        if(snapshot) {
+            snapshot->residentVertexCount = displayBuffer ? task.workpiece.samples.size() : 0;
+            snapshot->finiteVertexCount = 0;
+            snapshot->varianceSquareMeters = 0.0;
+        }
         task.trajectory = trajectory;
         const auto spraySamples = makePeriodicSpraySamples(task);
         task.trajectory = spraytrajectory::SprayTrajectory();
@@ -2629,6 +2860,10 @@ namespace spraythickness::opengl
             false, task.options.enableBvhOcclusion,
             task.options.enableHistoryCorrection);
         program.use();
+        // Display gather/reduction use the same binding points in this context.
+        for(unsigned int binding = 0; binding <= 10; ++binding) {
+            m_impl->resources.buffer(binding).bind(binding);
+        }
         configureProgram(program, task,
             static_cast<int>(task.workpiece.samples.size()),
             static_cast<int>(task.workpiece.samples.size()), false);
@@ -2670,7 +2905,107 @@ namespace spraythickness::opengl
                 std::chrono::steady_clock::now() - dispatchStart).count();
             begin += count;
         }
-        {
+        if(displayBuffer) {
+            auto& copyQuery = *m_impl->onlineDisplayQuery;
+            auto& statisticsQuery = *m_impl->onlineStatisticsQuery;
+            auto& copyProgram = *m_impl->onlineDisplayProgram;
+            copyProgram.use();
+            m_impl->resources.buffer(1).bind(0);
+            m_impl->onlineDisplayIndices->bind(1);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, displayBuffer);
+            copyProgram.setInt("count", static_cast<int>(m_impl->onlineDisplayCount));
+            copyQuery.begin();
+            glDispatchCompute(static_cast<GLuint>((m_impl->onlineDisplayCount + 255) / 256), 1, 1);
+            glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+            copyQuery.end();
+
+            auto& statisticsProgram = *m_impl->onlineStatisticsProgram;
+            statisticsProgram.use();
+            m_impl->onlineTargetBuffer->bind(1);
+            m_impl->onlineStatisticsBuffer->bind(2);
+            statisticsProgram.setInt("count", static_cast<int>(task.workpiece.samples.size()));
+            statisticsProgram.setInt("fullStatistics", fullStatistics ? 1 : 0);
+            glUniform1d(statisticsProgram.uniformLocation("coverageTolerance"), task.options.base.coverageTolerance);
+            glUniform1d(statisticsProgram.uniformLocation("overCoatTolerance"), task.options.base.overCoatTolerance);
+            statisticsQuery.begin();
+            glDispatchCompute(static_cast<GLuint>(kOnlineStatisticsGroups), 1, 1);
+            glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+            statisticsQuery.end();
+
+            // Wait only on the worker, and publish an already completed immutable
+            // frame. The GUI never waits for prediction or reads an unfinished field.
+            const auto waitStart = std::chrono::steady_clock::now();
+            GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            if(!fence) throw std::runtime_error("Failed to create the online GPU completion fence.");
+            glFlush();
+            GLenum status = GL_TIMEOUT_EXPIRED;
+            while(status == GL_TIMEOUT_EXPIRED) {
+                if(canceled && canceled()) {
+                    glDeleteSync(fence);
+                    throw std::runtime_error("Online GPU frame canceled.");
+                }
+                status = glClientWaitSync(fence, 0, 1000000);
+            }
+            glDeleteSync(fence);
+            if(status == GL_WAIT_FAILED) throw std::runtime_error("Online GPU completion wait failed.");
+            timing.gpuCompletionWaitMilliseconds = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - waitStart).count();
+            timing.gpuDisplayCopyMilliseconds = copyQuery.readMilliseconds();
+            timing.gpuStatisticsMilliseconds = statisticsQuery.readMilliseconds();
+
+            const auto readStart = std::chrono::steady_clock::now();
+            std::array<OnlinePartialStatistics, kOnlineStatisticsGroups> partials{};
+            m_impl->onlineStatisticsBuffer->download(partials.data(), sizeof(partials));
+            timing.statisticsReadbackBytes = sizeof(partials);
+            readbackMilliseconds = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - readStart).count();
+            const auto mergeStart = std::chrono::steady_clock::now();
+            OnlinePartialStatistics total{};
+            for(const auto& p : partials) {
+                if(p.count == 0.0) continue;
+                if(total.count == 0.0) { total = p; continue; }
+                const double count = total.count + p.count;
+                const double delta = p.mean - total.mean;
+                total.m2 += p.m2 + delta * delta * total.count * p.count / count;
+                total.mean += delta * p.count / count;
+                total.count = count;
+                total.minimum = std::min(total.minimum, p.minimum);
+                total.maximum = std::max(total.maximum, p.maximum);
+                total.errorSum += p.errorSum;
+                total.maxAbsError = std::max(total.maxAbsError, p.maxAbsError);
+                total.covered += p.covered;
+                total.under += p.under;
+                total.over += p.over;
+            }
+            snapshot->metrics = {};
+            if(total.count > 0.0) {
+                auto& metrics = snapshot->metrics;
+                metrics.minThickness = total.minimum;
+                metrics.maxThickness = total.maximum;
+                metrics.averageThickness = total.mean;
+                metrics.meanError = total.errorSum / total.count;
+                metrics.maxAbsError = total.maxAbsError;
+                metrics.coverageRatio = total.covered / total.count;
+                metrics.underCoatedRatio = total.under / total.count;
+                metrics.overCoatedRatio = total.over / total.count;
+                snapshot->finiteVertexCount = static_cast<std::size_t>(total.count);
+                snapshot->varianceSquareMeters = std::max(0.0, total.m2 / total.count);
+            }
+            timing.resultConversionMilliseconds = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - mergeStart).count();
+            if(fullStatistics) {
+                m_impl->onlineLastStatistics.metrics = snapshot->metrics;
+                m_impl->onlineLastStatistics.varianceSquareMeters = snapshot->varianceSquareMeters;
+            } else {
+                const auto minimum = snapshot->metrics.minThickness;
+                const auto maximum = snapshot->metrics.maxThickness;
+                snapshot->metrics = m_impl->onlineLastStatistics.metrics;
+                snapshot->metrics.minThickness = minimum;
+                snapshot->metrics.maxThickness = maximum;
+                snapshot->varianceSquareMeters = m_impl->onlineLastStatistics.varianceSquareMeters;
+            }
+            timing.gpuResidentDisplay = true;
+        } else {
             const auto readbackStart = std::chrono::steady_clock::now();
             // Read directly into the released frame buffer. Full and compact
             // callers may alternate, including a snapshot with no new spray.
@@ -2678,8 +3013,9 @@ namespace spraythickness::opengl
                 thickness.data(), thickness.size() * sizeof(float));
             readbackMilliseconds = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - readbackStart).count();
-            m_impl->onlineSprayPointCount += spraySamples.size();
+            timing.thicknessReadbackBytes = thickness.size() * sizeof(float);
         }
+        m_impl->onlineSprayPointCount += spraySamples.size();
         const auto timerReadStart = std::chrono::steady_clock::now();
         for(std::size_t query = 0; query < queryCount; ++query) {
             gpuMilliseconds += m_impl->onlineQueries[query]->readMilliseconds();
@@ -2732,7 +3068,9 @@ namespace spraythickness::opengl
             for(const auto& partial : partials) metrics.merge(partial);
             return metrics.metrics();
         };
-        if(snapshot) {
+        if(displayBuffer) {
+            // Metrics were reduced on the GPU; no per-vertex CPU conversion.
+        } else if(snapshot) {
             snapshot->metrics = collect([](std::size_t, const ThicknessSampleResult&) {});
         } else {
             result->field.results.resize(thickness.size());
@@ -2740,8 +3078,10 @@ namespace spraythickness::opengl
                 result->field.results[index] = sample;
             });
         }
-        timing.resultConversionMilliseconds = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - conversionStart).count();
+        if(!displayBuffer) {
+            timing.resultConversionMilliseconds = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - conversionStart).count();
+        }
         timing.gpuTimerReadMilliseconds = timerReadMilliseconds;
         timing.valid = true;
         timing.predictionVertexCount = task.workpiece.samples.size();
@@ -2758,15 +3098,23 @@ namespace spraythickness::opengl
     void OpenGLThicknessPredictionBackend::endOnline()
     {
         m_impl->onlineTask.reset();
+        m_impl->onlineBvh.reset();
+        m_impl->onlineGeometryHash = 0;
         m_impl->onlineThickness.clear();
         m_impl->onlineTargets.clear();
         m_impl->onlineSprayPointCount = 0;
+        m_impl->onlineDisplayCount = 0;
+        m_impl->onlineDisplayIndices.reset();
+        m_impl->onlineTargetBuffer.reset();
+        m_impl->onlineStatisticsBuffer.reset();
     }
 
     ThicknessPredictionResult OpenGLThicknessPredictionBackend::predict(
         const ThicknessPredictionTask& task,
         const ThicknessPredictionExecution& execution)
     {
+        // Offline dispatches reuse these bindings and invalidate prepared online geometry.
+        endOnline();
         const auto totalStart = std::chrono::steady_clock::now();
         validateTask(task);
         checkOpenGlErrors("prediction start");

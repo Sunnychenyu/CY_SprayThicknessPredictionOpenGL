@@ -1,9 +1,11 @@
 #include <SprayThicknessPredictionOpenGL/OpenGLThicknessPredictionBackend.h>
+#include <SprayThicknessPredictionOpenGL/ThicknessBvh.h>
 #include <GLRuntime/GLRuntime.h>
 
 #include <QGuiApplication>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
+#include <QOpenGLBuffer>
 #include <QSurfaceFormat>
 
 #include <cmath>
@@ -117,6 +119,42 @@ namespace
             && std::abs(lower) < 1.0e-12;
     }
 
+    bool verifyLiveOnlineToolDirections()
+    {
+        auto task = makeTask(false, true);
+        task.options.deposition.sigmaPhiRadians = 0.04;
+        task.options.deposition.sigmaPsiRadians = 0.16;
+        auto onlineTask = task;
+        onlineTask.trajectory = {};
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        backend.beginOnline(std::move(onlineTask));
+        const auto first = backend.appendOnline(task.trajectory);
+        auto next = task.trajectory;
+        for(auto& point : next.segments.front().points) point.time += 0.02;
+        backend.setOnlineToolDirections(Eigen::Vector3d::UnitZ(), Eigen::Vector3d::UnitY());
+        const auto away = backend.appendOnline(next);
+        for(std::size_t i = 0; i < first.field.results.size(); ++i) {
+            if(away.field.results[i].thickness != first.field.results[i].thickness) return false;
+        }
+        for(auto& point : next.segments.front().points) point.time += 0.02;
+        backend.setOnlineToolDirections(-Eigen::Vector3d::UnitZ(), Eigen::Vector3d::UnitY());
+        const auto accumulated = backend.appendOnline(next);
+        backend.endOnline();
+        auto referenceTask = task;
+        referenceTask.tool.powderFeedDirectionLocal = Eigen::Vector3d::UnitY();
+        referenceTask.trajectory = next;
+        const auto rotatedPattern = backend.predict(referenceTask);
+        if(first.field.results[4].thickness <= 0.0
+            || std::abs(first.field.results[1].thickness - rotatedPattern.field.results[1].thickness)
+                <= first.field.results[4].thickness * 0.01) return false;
+        for(std::size_t i = 0; i < first.field.results.size(); ++i) {
+            const double expected = first.field.results[i].thickness + rotatedPattern.field.results[i].thickness;
+            if(std::abs(accumulated.field.results[i].thickness - expected)
+                > std::max(1.0e-12, expected * 1.0e-4)) return false;
+        }
+        return accumulated.field.results[13].thickness == 0.0;
+    }
+
     bool verifyOnlineBatchPartition(bool history)
     {
         auto task = makeTask(false, true);
@@ -136,7 +174,7 @@ namespace
         }
         spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
         const auto offline = backend.predict(task);
-        for(std::size_t batchSize : { std::size_t(2), std::size_t(13) }) {
+        for(std::size_t batchSize : { std::size_t(1), std::size_t(2), std::size_t(13), std::size_t(64) }) {
             auto onlineTask = task;
             onlineTask.trajectory = {};
             backend.beginOnline(std::move(onlineTask));
@@ -237,6 +275,94 @@ namespace
         return compact.metrics.maxThickness == 0.0 && compact.timing.sprayPointCount == 0;
     }
 
+    bool verifyGpuDisplaySnapshot()
+    {
+        auto task = makeTask(false, true);
+        task.options.enableHistoryCorrection = true;
+        task.options.base.coverageTolerance = 2.0e-6;
+        task.options.base.overCoatTolerance = 3.0e-6;
+        for(std::size_t i = 0; i < task.workpiece.samples.size(); ++i)
+            task.workpiece.samples[i].targetThickness = 1.0e-5 + i * 1.0e-6;
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        backend.beginOnline(task);
+        // Deliberately reordered and duplicated, as with multiple display submeshes.
+        const std::vector<std::uint32_t> mapping{ 13, 4, 0, 17, 4, 8 };
+        backend.setOnlineDisplayMapping(mapping);
+        QOpenGLBuffer first;
+        if(!first.create() || !first.bind()) return false;
+        first.allocate(static_cast<int>(mapping.size() * sizeof(float)));
+        first.release();
+        spraythickness::OnlineThicknessSnapshot gpu;
+        backend.appendOnlineGpu(task.trajectory, first.bufferId(), gpu);
+        if(!gpu.thicknessMillimeters.empty() || gpu.size() != task.workpiece.samples.size()
+            || !gpu.timing.gpuResidentDisplay || gpu.timing.thicknessReadbackBytes != 0
+            || gpu.finiteVertexCount != gpu.size()) return false;
+        // Explicit readback for numerical verification, never part of display.
+        const auto cpu = backend.appendOnline({});
+        const auto close = [](double a, double b) {
+            return std::abs(a - b) <= std::max(1.0e-18, std::max(std::abs(a), std::abs(b)) * 1.0e-9);
+        };
+        if(!close(gpu.metrics.minThickness, cpu.metrics.minThickness)
+            || !close(gpu.metrics.maxThickness, cpu.metrics.maxThickness)
+            || !close(gpu.metrics.averageThickness, cpu.metrics.averageThickness)
+            || !close(gpu.metrics.meanError, cpu.metrics.meanError)
+            || !close(gpu.metrics.maxAbsError, cpu.metrics.maxAbsError)
+            || !close(gpu.metrics.coverageRatio, cpu.metrics.coverageRatio)
+            || !close(gpu.metrics.underCoatedRatio, cpu.metrics.underCoatedRatio)
+            || !close(gpu.metrics.overCoatedRatio, cpu.metrics.overCoatedRatio)) return false;
+        double variance = 0.0;
+        for(const auto& sample : cpu.field.results) {
+            const auto difference = sample.thickness - cpu.metrics.averageThickness;
+            variance += difference * difference;
+        }
+        variance /= cpu.field.results.size();
+        if(!close(gpu.varianceSquareMeters, variance)) return false;
+
+        QOpenGLContext* producer = QOpenGLContext::currentContext();
+        auto* producerSurface = producer->surface();
+        QOpenGLContext consumer;
+        consumer.setFormat(producer->format());
+        consumer.setShareContext(producer);
+        if(!consumer.create()) return false;
+        QOffscreenSurface surface;
+        surface.setFormat(consumer.format());
+        surface.create();
+        if(!consumer.makeCurrent(&surface)) return false;
+        std::vector<float> retained(mapping.size());
+        bool matches = first.bind() && first.read(0, retained.data(),
+            static_cast<int>(retained.size() * sizeof(float)));
+        first.release();
+        for(std::size_t i = 0; i < mapping.size(); ++i)
+            matches = matches && close(static_cast<double>(retained[i]) * 1.0e-3,
+                cpu.field.results[mapping[i]].thickness);
+        if(!producer->makeCurrent(producerSurface)) return false;
+
+        QOpenGLBuffer second;
+        if(!second.create() || !second.bind()) return false;
+        second.allocate(static_cast<int>(mapping.size() * sizeof(float)));
+        second.release();
+        auto next = task.trajectory;
+        for(auto& point : next.segments.front().points) point.time += 0.02;
+        backend.appendOnlineGpu(next, second.bufferId(), gpu);
+        if(gpu.metrics.maxThickness <= cpu.metrics.maxThickness) return false;
+        const auto averageBefore = gpu.metrics.averageThickness;
+        for(auto& point : next.segments.front().points) point.time += 0.02;
+        backend.appendOnlineGpu(next, second.bufferId(), gpu, {}, false);
+        const auto third = backend.appendOnline({});
+        if(!close(gpu.metrics.minThickness, third.metrics.minThickness)
+            || !close(gpu.metrics.maxThickness, third.metrics.maxThickness)
+            || gpu.metrics.averageThickness != averageBefore) return false;
+        // Full statistics catch up without adding any new physical exposure.
+        backend.appendOnlineGpu({}, second.bufferId(), gpu);
+        if(!close(gpu.metrics.averageThickness, third.metrics.averageThickness)) return false;
+        backend.endOnline();
+        // A displayed frame survives both subsequent accumulation and reset.
+        std::vector<float> after(mapping.size());
+        if(!first.bind() || !first.read(0, after.data(), static_cast<int>(after.size() * sizeof(float)))) return false;
+        first.release();
+        return matches && after == retained && retained[0] == 0.0f && retained[1] > 0.0f;
+    }
+
     bool verifyShortIntervalExposure()
     {
         // Adaptive integration and the last interval of a frame can be shorter
@@ -303,6 +429,12 @@ namespace
 
 int main(int argc, char** argv)
 {
+    // Distance inside an empty AABB region must be measured to the actual faces.
+    const auto mesh = makeTask(false, true).workpiece;
+    const auto bvh = spraythickness::opengl::ThicknessBvhBuilder::build(mesh);
+    if(std::abs(bvh.surfaceDistance(mesh, Eigen::Vector3d(0, 0, -0.0075)) - 0.0075) > 1.0e-10
+        || std::abs(bvh.surfaceDistance(mesh, Eigen::Vector3d(0.02, 0.02, 0)) - std::sqrt(0.0002)) > 1.0e-10
+        || bvh.surfaceDistance(mesh, Eigen::Vector3d(0, 0, 0)) > 1.0e-10) return 1;
     QGuiApplication application(argc, argv);
     QSurfaceFormat format;
     format.setVersion(4, 3);
@@ -325,8 +457,10 @@ int main(int argc, char** argv)
         const bool spatial = verifyOcclusion(true);
         std::cerr << "Checking online accumulation..." << std::endl;
         return paused && complete && spatial && verifyOnlineAccumulation()
+            && verifyLiveOnlineToolDirections()
             && verifyOnlineBatchPartition(false) && verifyOnlineBatchPartition(true)
             && verifyShortIntervalExposure() && verifyOnlineSnapshot()
+            && verifyGpuDisplaySnapshot()
             && verifyNarrowFootprintOcclusion() ? 0 : 1;
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';
