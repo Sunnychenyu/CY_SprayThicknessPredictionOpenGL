@@ -50,6 +50,7 @@ namespace spraythickness::opengl
         Eigen::Vector3d minorAxis = Eigen::Vector3d::UnitZ();
         double time = 0.0;
         double duration = 0.0;
+        std::size_t sourceIndex{ 0 };
     };
 
     PeriodicSectorReduction buildPeriodicSectorReduction(

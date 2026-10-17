@@ -1452,6 +1452,7 @@ namespace spraythickness::opengl
             }
 
             PeriodicSpraySample resultSample;
+            resultSample.sourceIndex = index;
             resultSample.position = toolPose.translation();
             resultSample.direction = direction;
             resultSample.majorAxis = major;

@@ -14,6 +14,7 @@ set(SOURCES
     src/SpatialInfluenceFiltering.cpp
     src/SpatialFilteredGaussianHistoryShader.h
     src/ThicknessBvh.cpp
+    src/MeshSamplingEvaluator.cpp
 )
 
 set(INTERFACE_HEADERS
@@ -22,6 +23,7 @@ set(INTERFACE_HEADERS
     include/${TARGET_NAME}/PeriodicSectorReduction.h
     include/${TARGET_NAME}/SpatialInfluenceFiltering.h
     include/${TARGET_NAME}/ThicknessBvh.h
+    include/${TARGET_NAME}/MeshSamplingEvaluator.h
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES} ${INTERFACE_HEADERS})
@@ -44,6 +46,9 @@ target_link_libraries(${TARGET_NAME}
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_17)
 
 if(BuildTests)
+    add_subdirectory(
+        regression/MeshSamplingEvaluatorTest
+        ${PROJECT_BINARY_DIR}/tests/mesh_sampling_evaluator)
     add_subdirectory(
         regression/PeriodicSectorReductionTest
         ${PROJECT_BINARY_DIR}/tests/periodic_sector_reduction)

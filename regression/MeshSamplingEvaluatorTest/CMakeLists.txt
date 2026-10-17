@@ -1,0 +1,6 @@
+add_executable(MeshSamplingEvaluatorTest main.cpp)
+target_link_libraries(MeshSamplingEvaluatorTest PRIVATE
+    SMRobotSpray::SprayThicknessPredictionOpenGL)
+target_compile_features(MeshSamplingEvaluatorTest PRIVATE cxx_std_17)
+set_target_properties(MeshSamplingEvaluatorTest PROPERTIES FOLDER tests/SMRobotSpray)
+add_test(NAME MeshSamplingEvaluatorTest COMMAND $<TARGET_FILE:MeshSamplingEvaluatorTest>)
