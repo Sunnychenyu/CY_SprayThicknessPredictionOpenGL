@@ -15,6 +15,10 @@ set(SOURCES
     src/SpatialFilteredGaussianHistoryShader.h
     src/ThicknessBvh.cpp
     src/MeshSamplingEvaluator.cpp
+    src/GpuMeshSampling.cpp
+    src/GpuMeshSampling.h
+    src/MeshSamplingShader.h
+    src/MeshSamplingProbeShader.h
 )
 
 set(INTERFACE_HEADERS
@@ -46,6 +50,9 @@ target_link_libraries(${TARGET_NAME}
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_17)
 
 if(BuildTests)
+    add_subdirectory(
+        regression/GpuMeshSamplingTest
+        ${PROJECT_BINARY_DIR}/tests/gpu_mesh_sampling)
     add_subdirectory(
         regression/MeshSamplingEvaluatorTest
         ${PROJECT_BINARY_DIR}/tests/mesh_sampling_evaluator)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include "MeshSamplingShader.h"
 
 namespace spraythickness::opengl
 {
@@ -78,7 +79,7 @@ vec3 safeNormalize(vec3 value, vec3 fallback)
         : fallback;
 }
 
-#if THICKNESS_ENABLE_BVH
+#if THICKNESS_ENABLE_BVH || THICKNESS_ENABLE_MESH_SAMPLING
 bool rayBox(vec3 origin, vec3 direction, vec3 minimum, vec3 maximum, float rayLength)
 {
     float nearDistance = 0.0;
@@ -168,23 +169,29 @@ float angleEfficiency(float angleDegrees) {
         - 0.000838598 * angleDegrees * angleDegrees) * 0.01);
 }
 
-float patternValue(float uMm, float vMm, float axialDistanceMm) {
+vec2 patternCoordinates(float uMm, float vMm, float axialDistanceMm) {
     float phi = atan(uMm, max(axialDistanceMm, 1e-6)) - phiOffset;
     float psi = atan(vMm, max(axialDistanceMm, 1e-6)) - psiOffset;
     float rotatedPhi = patternCosine * phi + patternSine * psi;
     float rotatedPsi = -patternSine * phi + patternCosine * psi;
     float normalizedPhi = rotatedPhi * inverseSigmaPhi;
     float normalizedPsi = rotatedPsi * inverseSigmaPsi;
-    return exp(-0.5 * (normalizedPhi * normalizedPhi + normalizedPsi * normalizedPsi));
+    return vec2(normalizedPhi, normalizedPsi);
 }
 
+float patternValue(float uMm, float vMm, float axialDistanceMm) {
+    vec2 coordinate = patternCoordinates(uMm, vMm, axialDistanceMm);
+    return exp(-0.5 * dot(coordinate, coordinate));
+}
+
+// MESH_SAMPLING_FUNCTIONS
 float correctionFactor(float tau) {
     float scale = max(historyScaleSeconds, 1e-6);
     return max(1.0, 1.0 + historyAmplitude
         * (exp(-tau / scale) - exp(-referenceHistorySeconds / scale)));
 }
 
-void main() {
+void evaluateThicknessVertex() {
     uint predictionVertex = gl_GlobalInvocationID.x;
     if(predictionVertex >= uint(predictionVertexCount)) return;
     uint vertex = usePredictionVertexBuffer ? predictionVertices[predictionVertex] : predictionVertex;
@@ -219,13 +226,33 @@ void main() {
         vec3 vertexToSprayDirection = -sprayToVertex / max(sprayDistance, 1.0e-6);
         float cosineIncidence = dot(normal, vertexToSprayDirection);
         if(cosineIncidence <= 0.0) continue;
+#if THICKNESS_ENABLE_MESH_SAMPLING
+        vec2 coordinate = patternCoordinates(
+            dot(sprayToVertex, majorAxis), dot(sprayToVertex, minorAxis), axialDistance);
+        float pattern = exp(-0.5 * dot(coordinate, coordinate));
+        bool meshVisibilityKnown = false;
+        if(dot(coordinate, coordinate) <= meshCoreSquared
+            && meshRepresentative(vertex, vertexToSprayDirection)) {
+            bool blocked = isOccluded(position, vertexToSprayDirection, sprayDistance);
+            meshVisibilityKnown = true;
+            if(!blocked) meshAccumulate(int(point), coordinate);
+#if THICKNESS_ENABLE_BVH
+            if(blocked) continue;
+#endif
+        }
+#else
         float pattern = patternValue(
             dot(sprayToVertex, majorAxis),
             dot(sprayToVertex, minorAxis),
             axialDistance);
+#endif
         if(pattern < contributionCutoffRatio) continue;
 #if THICKNESS_ENABLE_BVH
+#if THICKNESS_ENABLE_MESH_SAMPLING
+        if(!meshVisibilityKnown && isOccluded(position, vertexToSprayDirection, sprayDistance)) continue;
+#else
         if(isOccluded(position, vertexToSprayDirection, sprayDistance)) continue;
+#endif
 #endif
         float angleDegrees = 90.0 - degrees(acos(clamp(cosineIncidence, -1.0, 1.0)));
         float projection = max(1e-6, cosineIncidence);
@@ -252,11 +279,24 @@ void main() {
     lastUpdateTime[vertex] = lastTime;
     historyFactor[vertex] = factor;
 }
+
+void main() {
+#if THICKNESS_ENABLE_MESH_SAMPLING
+    meshBeginGroup();
+#endif
+    // Candidate loops diverge across cells; synchronize only outside them.
+    // Inactive invocations in the final group must also reach both barriers.
+    evaluateThicknessVertex();
+#if THICKNESS_ENABLE_MESH_SAMPLING
+    meshEndGroup();
+#endif
+}
 )GLSL";
 
     inline std::string makeSpatialFilteredGaussianHistoryShader(
         bool enableBvh,
-        bool enableHistory)
+        bool enableHistory,
+        bool enableMeshSampling = false)
     {
         std::string source(kSpatialFilteredGaussianHistoryShader);
         const std::size_t insertion = source.find('\n');
@@ -266,7 +306,13 @@ void main() {
             std::string("#define THICKNESS_ENABLE_BVH ")
                 + (enableBvh ? "1\n" : "0\n")
                 + "#define THICKNESS_ENABLE_HISTORY "
-                + (enableHistory ? "1\n" : "0\n"));
+                + (enableHistory ? "1\n" : "0\n")
+                + "#define THICKNESS_ENABLE_MESH_SAMPLING "
+                + (enableMeshSampling ? "1\n" : "0\n"));
+        if(enableMeshSampling) {
+            source.replace(source.find("// MESH_SAMPLING_FUNCTIONS"),
+                std::string("// MESH_SAMPLING_FUNCTIONS").size(), kMeshSamplingShader);
+        }
         return source;
     }
 }

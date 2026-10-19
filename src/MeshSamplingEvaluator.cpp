@@ -500,6 +500,29 @@ namespace spraythickness::opengl
         }
     }
 
+    MeshSamplingAssessment MeshSamplingEvaluator::summarize(
+        const ThicknessPredictionTask& task,
+        std::vector<MeshSamplingPointAssessment> points)
+    {
+        MeshSamplingAssessment result;
+        const auto sampled = task.options.base.trajectorySamplingMode == TrajectorySamplingMode::OriginalPoints
+            ? spraytrajectory::SprayTrajectorySampler::originalSamples(task.trajectory)
+            : spraytrajectory::SprayTrajectorySampler::sample(task.trajectory, task.options.base.timeStep);
+        result.totalPointCount = sampled.size();
+        for(std::size_t i = 0; i < sampled.size(); ++i) {
+            const auto& sample = sampled[i];
+            if(!sample.sprayEnabled) ++result.airMovePointCount;
+            else if(i + 1 == sampled.size() || sampled[i + 1].time <= sample.time
+                || (!sample.processId.empty() && !task.process.id.empty() && sample.processId != task.process.id)) {
+                ++result.ignoredPointCount;
+            }
+        }
+        result.applicable = true;
+        result.points.reserve(points.size());
+        for(auto& point : points) accumulate(result, point);
+        return result;
+    }
+
     MeshSamplingAssessment MeshSamplingEvaluator::evaluate(
         const ThicknessPredictionTask& task, const ThicknessPredictionExecution& execution)
     {
@@ -522,18 +545,8 @@ namespace spraythickness::opengl
             result.unavailableReason = "Gaussian angular parameters cannot define a forward core footprint.";
             return finish();
         }
-        const auto sampled = task.options.base.trajectorySamplingMode == TrajectorySamplingMode::OriginalPoints
-            ? spraytrajectory::SprayTrajectorySampler::originalSamples(task.trajectory)
-            : spraytrajectory::SprayTrajectorySampler::sample(task.trajectory, task.options.base.timeStep);
-        result.totalPointCount = sampled.size();
-        for(std::size_t i = 0; i < sampled.size(); ++i) {
-            const auto& sample = sampled[i];
-            if(!sample.sprayEnabled) ++result.airMovePointCount;
-            else if(i + 1 == sampled.size() || sampled[i + 1].time <= sample.time
-                || (!sample.processId.empty() && !task.process.id.empty() && sample.processId != task.process.id)) {
-                ++result.ignoredPointCount;
-            }
-        }
+        result = summarize(task, {});
+        result.applicable = false;
         const auto sprays = makePeriodicSpraySamples(task);
         const auto bvh = ThicknessBvhBuilder::build(task.workpiece, 8,
             [&](const char*, std::size_t, std::size_t) { checkCancelled(execution); });

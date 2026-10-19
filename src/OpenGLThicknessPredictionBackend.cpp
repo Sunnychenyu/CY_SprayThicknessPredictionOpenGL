@@ -4,6 +4,7 @@
 #include <SprayThicknessPredictionOpenGL/AxisymmetricProfileReduction.h>
 
 #include "OpenGLComputeProgram.h"
+#include "GpuMeshSampling.h"
 #include "PaperGaussianHistoryShader.h"
 #include "PeriodicSectorReduction.h"
 #include "SpatialFilteredGaussianHistoryShader.h"
@@ -1494,36 +1495,63 @@ namespace spraythickness::opengl
             OpenGLComputeProgram& program(
                 bool spatialFiltering,
                 bool enableBvh,
-                bool enableHistory)
+                bool enableHistory,
+                bool enableMeshSampling = false)
             {
                 const std::uint32_t key =
                     (spatialFiltering ? 1u : 0u)
                     | (enableBvh ? 2u : 0u)
-                    | (enableHistory ? 4u : 0u);
+                    | (enableHistory ? 4u : 0u)
+                    | (enableMeshSampling ? 8u : 0u);
                 const auto existing = m_programs.find(key);
                 if(existing != m_programs.end()) {
                     return *existing->second;
                 }
                 const std::string source = spatialFiltering
-                    ? makeSpatialFilteredGaussianHistoryShader(enableBvh, enableHistory)
-                    : makePaperGaussianHistoryShader(enableBvh, enableHistory);
+                    ? makeSpatialFilteredGaussianHistoryShader(enableBvh, enableHistory, enableMeshSampling)
+                    : makePaperGaussianHistoryShader(enableBvh, enableHistory, enableMeshSampling);
                 const char* name = spatialFiltering
                     ? "Spatial filtered Paper Gaussian history"
                     : "Paper Gaussian history";
-                auto program = std::make_unique<OpenGLComputeProgram>(
-                    source.c_str(),
-                    name);
+                std::unique_ptr<OpenGLComputeProgram> program;
+                try {
+                    program = std::make_unique<OpenGLComputeProgram>(source.c_str(), name);
+                } catch(const std::exception& exception) {
+                    if(!enableMeshSampling) throw;
+                    m_meshSampling.disable(std::string("GPU mesh assessment shader unavailable: ") + exception.what());
+                    return this->program(spatialFiltering, enableBvh, enableHistory, false);
+                }
                 OpenGLComputeProgram& result = *program;
                 m_programs.emplace(key, std::move(program));
                 return result;
             }
 
+            GpuMeshSampling& meshSampling() { return m_meshSampling; }
+
         private:
+            GpuMeshSampling m_meshSampling;
             std::array<std::unique_ptr<GpuBuffer>, 14> m_buffers;
             std::unordered_map<
                 std::uint32_t,
                 std::unique_ptr<OpenGLComputeProgram>> m_programs;
         };
+
+        std::shared_ptr<const ThicknessBvh> preparePredictionBvh(
+            const ThicknessPredictionTask& task, GpuMeshSampling& meshSampling,
+            const ThicknessBvhProgress& progress)
+        {
+            if(task.options.enableBvhOcclusion || meshSampling.active()) {
+                try {
+                    auto bvh = cachedBvh(task.workpiece, progress);
+                    if(!bvh->empty()) return bvh;
+                    throw std::runtime_error("Failed to build the workpiece BVH.");
+                } catch(const std::exception& exception) {
+                    if(task.options.enableBvhOcclusion) throw;
+                    meshSampling.disable(std::string("GPU mesh assessment BVH unavailable: ") + exception.what());
+                }
+            }
+            return std::make_shared<ThicknessBvh>();
+        }
 
         std::array<float, 4> vector4(const Eigen::Vector3d& value, float w = 0.0f)
         {
@@ -1734,6 +1762,7 @@ namespace spraythickness::opengl
             BackendGpuResources& resources,
             const GpuCapabilities& capabilities)
         {
+            auto& meshSampling = resources.meshSampling();
             PeriodicSectorReduction periodicReduction;
             bool periodicReductionApplied = false;
             double mappingMilliseconds = 0.0;
@@ -1867,7 +1896,9 @@ namespace spraythickness::opengl
                 gridWorkpiece,
                 previewSpraySamples,
                 task.options.deposition,
-                task.options.spatialFiltering.contributionCutoffRatio,
+                meshSampling.active()
+                    ? std::min(task.options.spatialFiltering.contributionCutoffRatio, 0.05)
+                    : task.options.spatialFiltering.contributionCutoffRatio,
                 task.options.spatialFiltering.overrideGridCellSize,
                 task.options.spatialFiltering.gridCellSizeMeters,
                 gridProgress,
@@ -1984,10 +2015,7 @@ namespace spraythickness::opengl
                 reportProgress(execution, 0.11 + 0.04 * fraction, message.c_str());
             };
             const auto bvhStart = std::chrono::steady_clock::now();
-            const std::shared_ptr<const ThicknessBvh> bvh =
-                task.options.enableBvhOcclusion
-                ? cachedBvh(task.workpiece, bvhProgress)
-                : std::make_shared<ThicknessBvh>();
+            const auto bvh = preparePredictionBvh(task, meshSampling, bvhProgress);
             const double bvhMilliseconds = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - bvhStart).count();
             if(task.options.enableBvhOcclusion && bvh->empty()) {
@@ -1998,7 +2026,8 @@ namespace spraythickness::opengl
             OpenGLComputeProgram& program = resources.program(
                 true,
                 task.options.enableBvhOcclusion,
-                task.options.enableHistoryCorrection);
+                task.options.enableHistoryCorrection,
+                meshSampling.active());
             program.use();
             configureSpatialProgram(
                 program,
@@ -2006,7 +2035,9 @@ namespace spraythickness::opengl
                 static_cast<int>(computationWorkpiece.samples.size()),
                 static_cast<int>(predictionVertexCount),
                 periodicReductionApplied || axisymmetricProfileApplied
-                    || candidateVertexFilteringApplied);
+                    || candidateVertexFilteringApplied
+                    || !task.options.spatialFiltering.predictionVertexIndices.empty());
+            meshSampling.configure(program);
             checkOpenGlErrors("spatial compute program setup");
 
             const int maximumBlockSize = capabilities.maximumBlockSize;
@@ -3111,8 +3142,14 @@ void main() {
 
     ThicknessPredictionResult OpenGLThicknessPredictionBackend::predict(
         const ThicknessPredictionTask& task,
-        const ThicknessPredictionExecution& execution)
+        const ThicknessPredictionExecution& requestedExecution)
     {
+        ThicknessPredictionExecution execution = requestedExecution;
+        if(task.options.evaluateMeshSampling && requestedExecution.progress) {
+            execution.progress = [progress = requestedExecution.progress](double value, const std::string& message) {
+                progress(value * 0.95, message);
+            };
+        }
         // Offline dispatches reuse these bindings and invalidate prepared online geometry.
         endOnline();
         const auto totalStart = std::chrono::steady_clock::now();
@@ -3145,9 +3182,11 @@ void main() {
         if(allSpraySamples.empty()) {
             throw std::runtime_error("Trajectory sampling produced no active spray intervals.");
         }
+        auto& meshSampling = m_impl->resources.meshSampling();
+        meshSampling.prepare(task, previewSpraySamples.size(), execution);
         if(task.options.spatialFiltering.enabled) {
             try {
-                return predictSpatialFiltered(
+                auto result = predictSpatialFiltered(
                     task,
                     computationWorkpiece,
                     execution,
@@ -3157,8 +3196,15 @@ void main() {
                     allSpraySamples,
                     m_impl->resources,
                     m_impl->deviceCapabilities());
+                if(task.options.evaluateMeshSampling && !canceled(execution)) {
+                    result.meshSamplingAssessment = meshSampling.finish(task, previewSpraySamples, requestedExecution);
+                    result.timing.backendTotalMilliseconds = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - totalStart).count();
+                    reportProgress(requestedExecution, 1.0, "GPU thickness prediction and mesh assessment completed.");
+                }
+                return result;
             } catch(const std::exception& exception) {
-                if(!task.options.spatialFiltering.fallbackToFullPrediction) {
+                if(canceled(execution) || !task.options.spatialFiltering.fallbackToFullPrediction) {
                     throw;
                 }
                 reportProgress(
@@ -3170,7 +3216,7 @@ void main() {
                 fallbackTask.options.spatialFiltering.enabled = false;
                 ThicknessPredictionResult fallbackResult = predict(
                     fallbackTask,
-                    execution);
+                    requestedExecution);
                 fallbackResult.warnings.insert(
                     fallbackResult.warnings.begin(),
                     std::string("Spatial filtering fell back to the original algorithm: ")
@@ -3302,10 +3348,7 @@ void main() {
                 reportProgress(execution, progress, message.c_str());
             };
         const auto bvhStart = std::chrono::steady_clock::now();
-        const std::shared_ptr<const ThicknessBvh> bvh =
-            task.options.enableBvhOcclusion
-            ? cachedBvh(task.workpiece, bvhProgress)
-            : std::make_shared<ThicknessBvh>();
+        const auto bvh = preparePredictionBvh(task, meshSampling, bvhProgress);
         const double bvhMilliseconds = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - bvhStart).count();
         reportProgress(execution, 0.15, "Thickness BVH ready");
@@ -3316,7 +3359,8 @@ void main() {
         OpenGLComputeProgram& program = m_impl->resources.program(
             false,
             task.options.enableBvhOcclusion,
-            task.options.enableHistoryCorrection);
+            task.options.enableHistoryCorrection,
+            meshSampling.active());
         program.use();
         configureProgram(
             program,
@@ -3324,6 +3368,7 @@ void main() {
             static_cast<int>(task.workpiece.samples.size()),
             static_cast<int>(predictionVertexIndices.size()),
             periodicReductionApplied);
+        meshSampling.configure(program);
         checkOpenGlErrors("compute program setup");
 
         const std::size_t vertexCount = task.workpiece.samples.size();
@@ -3451,6 +3496,7 @@ void main() {
             const auto batchStart = std::chrono::steady_clock::now();
             sprayBuffer.update(spraySamples.data() + begin, count * sizeof(SprayGpuSample));
             glUniform1i(sprayPointCountLocation, static_cast<int>(count));
+            meshSampling.configure(program, begin);
             checkOpenGlErrors("batch input upload");
             glDispatchCompute(
                 static_cast<unsigned int>((predictionVertexCount + 255) / 256),
@@ -3520,6 +3566,13 @@ void main() {
         result.warnings = std::move(predictionWarnings);
         const double downloadMilliseconds = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - downloadStart).count();
+        if(meshSampling.active()) {
+            // The complete path streams spray batches at binding 2. Zero-count
+            // probing addresses global spray indices after the main query ends.
+            sprayBuffer.upload(2, allSpraySamples.data(),
+                allSpraySamples.size() * sizeof(SprayGpuSample), GL_STATIC_DRAW);
+        }
+        result.meshSamplingAssessment = meshSampling.finish(task, previewSpraySamples, requestedExecution);
         const double totalMilliseconds = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - totalStart).count();
         result.timing.valid = true;
@@ -3534,7 +3587,7 @@ void main() {
         result.timing.sprayPointCount = spraySamples.size();
         result.timing.adaptiveBatchSize = batchSelector.selectedBatch();
         reportProgress(
-            execution,
+            requestedExecution,
             1.0,
             (std::string("GPU thickness prediction completed; BVH ")
                 + std::to_string(bvhMilliseconds) + " ms, dispatch "
