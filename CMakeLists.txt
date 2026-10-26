@@ -50,21 +50,11 @@ target_link_libraries(${TARGET_NAME}
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_17)
 
 if(BuildTests)
-    add_subdirectory(
-        regression/GpuMeshSamplingTest
-        ${PROJECT_BINARY_DIR}/tests/gpu_mesh_sampling)
-    add_subdirectory(
-        regression/MeshSamplingEvaluatorTest
-        ${PROJECT_BINARY_DIR}/tests/mesh_sampling_evaluator)
-    add_subdirectory(
-        regression/PeriodicSectorReductionTest
-        ${PROJECT_BINARY_DIR}/tests/periodic_sector_reduction)
-    add_subdirectory(
-        regression/SpatialInfluenceFilteringTest
-        ${PROJECT_BINARY_DIR}/tests/spatial_influence_filtering)
-    add_subdirectory(
-        regression/ThicknessBvhOcclusionTest
-        ${PROJECT_BINARY_DIR}/tests/thickness_bvh_occlusion)
+    rs2026_add_test_unit(regression/GpuMeshSamplingTest)
+    rs2026_add_test_unit(regression/MeshSamplingEvaluatorTest)
+    rs2026_add_test_unit(regression/PeriodicSectorReductionTest)
+    rs2026_add_test_unit(regression/SpatialInfluenceFilteringTest)
+    rs2026_add_test_unit(regression/ThicknessBvhOcclusionTest)
 endif()
 
 set_target_properties(${TARGET_NAME} PROPERTIES
