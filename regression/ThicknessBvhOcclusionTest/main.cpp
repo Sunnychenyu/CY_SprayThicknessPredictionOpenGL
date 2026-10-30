@@ -62,6 +62,25 @@ namespace
         return task;
     }
 
+    bool verifyContinuousHistory(bool spatial)
+    {
+        auto task=makeTask(spatial,true);task.options.enableHistoryCorrection=true;
+        auto& p=task.options.deposition;p.useCalibratedHistory=true;p.useCalibratedEfficiencies=true;
+        p.distanceEfficiency.kind=p.angleEfficiency.kind=spraythickness::EfficiencyCurveKind::Unit;
+        p.rotationRadians=p.phiOffsetRadians=p.psiOffsetRadians=0;
+        auto& h=p.calibratedHistory;h.continuousInput=true;h.referencePeakRateMillimetersPerSecond=p.amplitudeMillimeters;
+        h.historyScaleSeconds=.05;h.coolingTimeSeconds=.2;h.referenceHistorySeconds=.03;h.correctionAmplitude=.4;
+        auto& points=task.trajectory.segments.front().points;const auto prototype=points.front();points.clear();
+        double tau=0,expected=0,lastEnd=0;
+        const double times[]={0,.01,.033,.08};
+        for(int i=0;i<4;++i){auto point=prototype;point.time=times[i];point.sprayEnabled=i<3;points.push_back(point);
+            if(i<3){const double dt=times[i+1]-times[i];
+                expected+=spraythickness::applyPaperGaussianHistory(p.amplitudeMillimeters,1,dt,times[i+1]-lastEnd,tau,h);lastEnd=times[i+1];}}
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;const auto result=backend.predict(task);
+        return std::abs(result.field.results[4].thickness-expected/1000)<std::max(1e-11,expected*2e-6)
+            && std::abs(result.field.results[13].thickness)<1e-12;
+    }
+
     bool verifyCalibratedEfficiencies(bool spatial)
     {
         auto task=makeTask(spatial,false);auto& p=task.options.deposition;
@@ -477,7 +496,8 @@ int main(int argc, char** argv)
         std::cerr << "Checking spatial occlusion..." << std::endl;
         const bool spatial = verifyOcclusion(true);
         std::cerr << "Checking online accumulation..." << std::endl;
-        return verifyCalibratedEfficiencies(false) && verifyCalibratedEfficiencies(true)
+        return verifyContinuousHistory(false) && verifyContinuousHistory(true)
+            && verifyCalibratedEfficiencies(false) && verifyCalibratedEfficiencies(true)
             && paused && complete && spatial && verifyOnlineAccumulation()
             && verifyLiveOnlineToolDirections()
             && verifyOnlineBatchPartition(false) && verifyOnlineBatchPartition(true)

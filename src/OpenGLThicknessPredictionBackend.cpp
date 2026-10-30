@@ -1710,6 +1710,8 @@ namespace spraythickness::opengl
             if(deposition.useCalibratedEfficiencies) {
                 program.setCalibratedCurves(deposition.distanceEfficiency,deposition.angleEfficiency);
             }
+            program.setInt("continuousHistoryInput",history.continuousInput?1:0);
+            program.setFloat("referencePeakRate",static_cast<float>(history.referencePeakRateMillimetersPerSecond));
             program.setFloat("historyAmplitude", static_cast<float>(history.correctionAmplitude));
             program.setFloat("historyScaleSeconds", static_cast<float>(history.historyScaleSeconds));
             program.setFloat("referenceHistorySeconds", static_cast<float>(history.referenceHistorySeconds));

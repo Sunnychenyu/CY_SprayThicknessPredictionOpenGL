@@ -57,6 +57,8 @@ uniform float referenceDistanceMm;
 uniform float referenceAngleDegrees;
 uniform float referenceExposureSeconds;
 uniform float processScale;
+uniform int continuousHistoryInput;
+uniform float referencePeakRate;
 uniform float historyAmplitude;
 uniform float historyScaleSeconds;
 uniform float referenceHistorySeconds;
@@ -190,8 +192,8 @@ float patternValue(float uMm, float vMm, float axialDistanceMm) {
 // MESH_SAMPLING_FUNCTIONS
 float correctionFactor(float tau) {
     float scale = max(historyScaleSeconds, 1e-6);
-    return max(1.0, 1.0 + historyAmplitude
-        * (exp(-tau / scale) - exp(-referenceHistorySeconds / scale)));
+    float factor=1.0 + historyAmplitude * (exp(-tau / scale) - exp(-referenceHistorySeconds / scale));
+    return continuousHistoryInput!=0?factor:max(1.0,factor);
 }
 
 void evaluateThicknessVertex() {
@@ -221,7 +223,7 @@ void evaluateThicknessVertex() {
         vec3 sprayDirection = sprayData[base + 1u].xyz;
         vec3 majorAxis = sprayData[base + 2u].xyz;
         vec3 minorAxis = sprayData[base + 3u].xyz;
-        float currentTime = sprayData[base + 4u].x;
+        float currentTime = sprayData[base + 4u].x + (continuousHistoryInput!=0?dt:0.0);
         vec3 sprayToVertex = position - sprayPosition;
         float axialDistance = dot(sprayToVertex, sprayDirection);
         if(axialDistance <= 0.001) continue;
@@ -270,7 +272,13 @@ void evaluateThicknessVertex() {
         if(baseThickness <= 0.0) continue;
 #if THICKNESS_ENABLE_HISTORY
         tau *= exp(-max(0.0, currentTime - lastTime) / max(coolingTimeSeconds, 1e-6));
-        if(baseThickness >= activityThresholdRatio * peak) tau += dt;
+        if(continuousHistoryInput!=0) {
+                float d=clamp(baseThickness/(max(dt,1e-12)*max(referencePeakRate,1e-20)),0.0,1.0);
+                float w=d>=activityThresholdRatio?d:0.0;
+                float x=dt/max(coolingTimeSeconds,1e-6);
+                float injection=x<1e-3?x*(1.0-x*0.5+x*x/6.0):1.0-exp(-x);
+                tau+=coolingTimeSeconds*injection*w;
+            } else if(baseThickness >= activityThresholdRatio * peak) tau += dt;
         factor = correctionFactor(tau);
 #else
         factor = 1.0;
