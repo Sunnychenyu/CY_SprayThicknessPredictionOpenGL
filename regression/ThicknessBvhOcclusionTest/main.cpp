@@ -62,6 +62,27 @@ namespace
         return task;
     }
 
+    bool verifyCalibratedEfficiencies(bool spatial)
+    {
+        auto task=makeTask(spatial,false);auto& p=task.options.deposition;
+        p.calibrationModelId="calibrated-regression";p.useCalibratedEfficiencies=true;
+        p.distanceEfficiency.kind=spraythickness::EfficiencyCurveKind::Poly1;p.distanceEfficiency.parameters={.01,.5};
+        p.angleEfficiency.kind=spraythickness::EfficiencyCurveKind::LinearNodes;
+        p.angleEfficiency.x={45,90};p.angleEfficiency.y={.5,1};
+        p.rotationRadians=.25;p.phiOffsetRadians=.001;p.psiOffsetRadians=-.002;
+        p.sigmaPhiRadians=.04;p.sigmaPsiRadians=.06;
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        const auto result=backend.predict(task);
+        for(const auto index:{4,5}){
+            const double x=index==4?0:.01;
+            const double distance=std::sqrt(.12*.12+x*x)*1000;
+            const double angle=90-std::acos(120/distance)*180/3.14159265358979323846;
+            const double expected=spraythickness::paperGaussianRateMillimeters(p,distance,angle,std::atan2(x,.12),0)*.02/1000;
+            if(std::abs(result.field.results[index].thickness-expected)>std::max(expected*2e-4,1e-12))return false;
+        }
+        return true;
+    }
+
     bool verifyOcclusion(bool spatialFiltering)
     {
         spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
@@ -456,7 +477,8 @@ int main(int argc, char** argv)
         std::cerr << "Checking spatial occlusion..." << std::endl;
         const bool spatial = verifyOcclusion(true);
         std::cerr << "Checking online accumulation..." << std::endl;
-        return paused && complete && spatial && verifyOnlineAccumulation()
+        return verifyCalibratedEfficiencies(false) && verifyCalibratedEfficiencies(true)
+            && paused && complete && spatial && verifyOnlineAccumulation()
             && verifyLiveOnlineToolDirections()
             && verifyOnlineBatchPartition(false) && verifyOnlineBatchPartition(true)
             && verifyShortIntervalExposure() && verifyOnlineSnapshot()

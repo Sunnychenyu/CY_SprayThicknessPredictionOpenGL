@@ -2,10 +2,11 @@
 
 #include <string>
 #include "MeshSamplingShader.h"
+#include "CalibratedEfficiencyShader.h"
 
 namespace spraythickness::opengl
 {
-    inline constexpr const char* kSpatialFilteredGaussianHistoryShader = R"GLSL(#version 430
+    inline const std::string kSpatialFilteredGaussianHistoryShader = addCalibratedEfficiencyShader(R"GLSL(#version 430
 #ifndef THICKNESS_ENABLE_BVH
 #define THICKNESS_ENABLE_BVH 1
 #endif
@@ -159,12 +160,14 @@ bool isOccluded(vec3 vertexPosition, vec3 rayDirection, float rayLength)
 #endif
 
 float distanceEfficiency(float distanceMm) {
+    if(useCalibratedEfficiencies)return max(calibratedEfficiency(true,distanceMm),1e-9);
     float x = max(distanceMm, 1e-6);
     float normalizedLogDistance = log(x / 106.8615) / 0.0839;
     return 0.9789 + 0.1456 * exp(-(normalizedLogDistance * normalizedLogDistance));
 }
 
 float angleEfficiency(float angleDegrees) {
+    if(useCalibratedEfficiencies)return max(calibratedEfficiency(false,angleDegrees),1e-9);
     return max(1e-6, (40.81414 + 0.73808 * angleDegrees
         - 0.000838598 * angleDegrees * angleDegrees) * 0.01);
 }
@@ -259,6 +262,7 @@ void evaluateThicknessVertex() {
         float distanceSquared = max(dot(sprayToVertex, sprayToVertex), 1.0e-12);
         float geometryScale = referenceDistanceSquared / distanceSquared
             * projection / referenceProjection;
+        if(efficiencyIncludesGeometry)geometryScale=1.0;
         float distanceScale = distanceEfficiency(sprayDistance) / referenceDistanceEfficiency;
         float angleScale = angleEfficiency(angleDegrees) / referenceAngleEfficiency;
         float peak = peakScale * geometryScale * distanceScale * angleScale * max(1e-6, dt);
@@ -291,7 +295,7 @@ void main() {
     meshEndGroup();
 #endif
 }
-)GLSL";
+)GLSL");
 
     inline std::string makeSpatialFilteredGaussianHistoryShader(
         bool enableBvh,

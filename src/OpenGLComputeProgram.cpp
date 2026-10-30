@@ -29,6 +29,25 @@ namespace spraythickness::opengl
         }
     }
 
+    void OpenGLComputeProgram::setCalibratedCurves(const CalibratedEfficiencyCurve& distance,const CalibratedEfficiencyCurve& angle) const {
+        if(m_curvesUploaded && m_distanceCurve==distance && m_angleCurve==angle)return;
+        const auto upload=[this](const char* prefix,const CalibratedEfficiencyCurve& curve){
+            if(curve.x.size()>128 || curve.x.size()!=curve.y.size())
+                throw std::invalid_argument("Efficiency interpolation requires at most 128 matching nodes.");
+            const std::string name(prefix);
+            setInt((name+"CurveKind").c_str(),static_cast<int>(curve.kind));
+            setInt((name+"CurveCount").c_str(),static_cast<int>(curve.x.size()));
+            float parameters[6]{};
+            for(std::size_t i=0;i<curve.parameters.size() && i<6;++i)parameters[i]=float(curve.parameters[i]);
+            glUniform1fv(uniformLocation((name+"CurveParameters[0]").c_str()),6,parameters);
+            std::vector<float> nodes;nodes.reserve(curve.x.size()*2);
+            for(std::size_t i=0;i<curve.x.size();++i){nodes.push_back(float(curve.x[i]));nodes.push_back(float(curve.y[i]));}
+            if(!nodes.empty())glUniform2fv(uniformLocation((name+"CurveNodes[0]").c_str()),int(curve.x.size()),nodes.data());
+        };
+        upload("distance",distance);upload("angle",angle);
+        m_distanceCurve=distance;m_angleCurve=angle;m_curvesUploaded=true;
+    }
+
     OpenGLComputeProgram::OpenGLComputeProgram(const char* source, const char* debugName)
     {
         const unsigned int shader = glCreateShader(GL_COMPUTE_SHADER);

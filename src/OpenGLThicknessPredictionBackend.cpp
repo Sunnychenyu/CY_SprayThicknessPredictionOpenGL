@@ -1574,23 +1574,6 @@ namespace spraythickness::opengl
                 : fallback;
         }
 
-        float distanceEfficiencyCpu(float distanceMillimeters)
-        {
-            const float x = std::max(distanceMillimeters, 1.0e-6f);
-            const float normalizedLogDistance =
-                std::log(x / 106.8615f) / 0.0839f;
-            return 0.9789f + 0.1456f * std::exp(
-                -(normalizedLogDistance * normalizedLogDistance));
-        }
-
-        float angleEfficiencyCpu(float angleDegrees)
-        {
-            return std::max(
-                1.0e-6f,
-                (40.81414f + 0.73808f * angleDegrees
-                    - 0.000838598f * angleDegrees * angleDegrees) * 0.01f);
-        }
-
         void reportProgress(
             const ThicknessPredictionExecution& execution,
             double progress,
@@ -1673,7 +1656,7 @@ namespace spraythickness::opengl
         {
             const auto& options = task.options;
             const auto& deposition = options.deposition;
-            const auto& history = options.history;
+            const auto& history = deposition.useCalibratedHistory ? deposition.calibratedHistory : options.history;
             const float referenceDistanceMillimeters = static_cast<float>(
                 deposition.referenceDistanceMeters * kMetersToMillimeters);
             const float referenceAngle = static_cast<float>(
@@ -1711,10 +1694,10 @@ namespace spraythickness::opengl
                     * 3.14159265358979323846f / 180.0f)));
             program.setFloat(
                 "referenceDistanceEfficiency",
-                distanceEfficiencyCpu(referenceDistanceMillimeters));
+                static_cast<float>(paperGaussianDistanceEfficiency(deposition,referenceDistanceMillimeters)));
             program.setFloat(
                 "referenceAngleEfficiency",
-                angleEfficiencyCpu(referenceAngle));
+                static_cast<float>(paperGaussianAngleEfficiency(deposition,referenceAngle)));
             program.setFloat(
                 "referenceDistanceSquared",
                 referenceDistanceMillimeters * referenceDistanceMillimeters);
@@ -1722,6 +1705,11 @@ namespace spraythickness::opengl
                 "peakScale",
                 static_cast<float>(deposition.amplitudeMillimeters)
                     * processScale / referenceExposure);
+            program.setInt("efficiencyIncludesGeometry",deposition.efficiencyIncludesGeometry?1:0);
+            program.setInt("useCalibratedEfficiencies", deposition.useCalibratedEfficiencies?1:0);
+            if(deposition.useCalibratedEfficiencies) {
+                program.setCalibratedCurves(deposition.distanceEfficiency,deposition.angleEfficiency);
+            }
             program.setFloat("historyAmplitude", static_cast<float>(history.correctionAmplitude));
             program.setFloat("historyScaleSeconds", static_cast<float>(history.historyScaleSeconds));
             program.setFloat("referenceHistorySeconds", static_cast<float>(history.referenceHistorySeconds));
