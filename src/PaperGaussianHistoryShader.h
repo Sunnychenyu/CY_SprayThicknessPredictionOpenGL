@@ -46,6 +46,9 @@ uniform float amplitudeMm;
 uniform float patternRotation;
 uniform float phiOffset;
 uniform float psiOffset;
+uniform int gaussianCount;
+uniform vec4 gaussianShape[16];
+uniform float gaussianCoefficient[16];
 uniform float sigmaPhi;
 uniform float sigmaPsi;
 uniform float referenceDistanceMm;
@@ -181,7 +184,7 @@ float distanceEfficiency(float distanceMm) {
 }
 
 float angleEfficiency(float angleDegrees) {
-    if(useCalibratedEfficiencies)return max(calibratedEfficiency(false,angleDegrees),1e-9);
+    if(useCalibratedEfficiencies)return max(calibratedEfficiency(false,angleDegrees),0.0);
     return max(1e-6, (40.81414 + 0.73808 * angleDegrees
         - 0.000838598 * angleDegrees * angleDegrees) * 0.01);
 }
@@ -197,6 +200,13 @@ vec2 patternCoordinates(float uMm, float vMm, float axialDistanceMm) {
 }
 
 float patternValue(float uMm, float vMm, float axialDistanceMm) {
+    if(gaussianCount>0){
+        vec2 angle=vec2(atan(uMm,max(axialDistanceMm,1e-6)),atan(vMm,max(axialDistanceMm,1e-6)));
+        float value=0.0;
+        for(int i=0;i<gaussianCount;++i){vec2 q=(angle-gaussianShape[i].xy)/gaussianShape[i].zw;
+            value+=gaussianCoefficient[i]*exp(-0.5*dot(q,q));}
+        return value;
+    }
     vec2 coordinate = patternCoordinates(uMm, vMm, axialDistanceMm);
     return exp(-0.5 * dot(coordinate, coordinate));
 }
@@ -286,7 +296,7 @@ void evaluateThicknessVertex() {
             tau *= exp(-max(0.0, currentTime - lastTime) / max(coolingTimeSeconds, 1e-6));
             if(continuousHistoryInput!=0) {
                 float d=clamp(baseThickness/(max(dt,1e-12)*max(referencePeakRate,1e-20)),0.0,1.0);
-                float w=d>=activityThresholdRatio?d:0.0;
+                float w=d; // Continuous heat input must remain continuous at the footprint edge.
                 float x=dt/max(coolingTimeSeconds,1e-6);
                 float injection=x<1e-3?x*(1.0-x*0.5+x*x/6.0):1.0-exp(-x);
                 tau+=coolingTimeSeconds*injection*w;
@@ -296,7 +306,7 @@ void evaluateThicknessVertex() {
 #else
         factor = 1.0;
 #endif
-        accumulated += baseThickness * factor;
+        accumulated += baseThickness * factor * densityThicknessScale(sprayDistance,angleDegrees);
         lastTime = currentTime;
     }
 

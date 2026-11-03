@@ -91,13 +91,17 @@ namespace
         p.rotationRadians=.25;p.phiOffsetRadians=.001;p.psiOffsetRadians=-.002;
         p.sigmaPhiRadians=.04;p.sigmaPsiRadians=.06;
         spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
-        const auto result=backend.predict(task);
-        for(const auto index:{4,5}){
-            const double x=index==4?0:.01;
-            const double distance=std::sqrt(.12*.12+x*x)*1000;
-            const double angle=90-std::acos(120/distance)*180/3.14159265358979323846;
-            const double expected=spraythickness::paperGaussianRateMillimeters(p,distance,angle,std::atan2(x,.12),0)*.02/1000;
-            if(std::abs(result.field.results[index].thickness-expected)>std::max(expected*2e-4,1e-12))return false;
+        for(double lower:{45.,89.}){
+            p.angleEfficiency.x.front()=lower;p.angleEfficiency.lowerRampEnd=lower;
+            const auto result=backend.predict(task);
+            // The off-axis vertex falls below the 89-degree calibration range.
+            for(const auto index:{4,5}){
+                const double x=index==4?0:.01;
+                const double distance=std::sqrt(.12*.12+x*x)*1000;
+                const double angle=90-std::acos(120/distance)*180/3.14159265358979323846;
+                const double expected=spraythickness::paperGaussianRateMillimeters(p,distance,angle,std::atan2(x,.12),0)*.02/1000;
+                if(std::abs(result.field.results[index].thickness-expected)>std::max(expected*2e-4,1e-12))return false;
+            }
         }
         return true;
     }

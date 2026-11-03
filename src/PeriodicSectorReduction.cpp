@@ -1474,14 +1474,8 @@ namespace spraythickness::opengl
             1.0e-12,
             0.999999);
         const double gaussianRadius = std::sqrt(-2.0 * std::log(cutoff));
-        const double maximumSigma = std::max(
-            std::abs(options.deposition.sigmaPhiRadians),
-            std::abs(options.deposition.sigmaPsiRadians));
-        const double maximumOffset = std::max(
-            std::abs(options.deposition.phiOffsetRadians),
-            std::abs(options.deposition.psiOffsetRadians));
         const double halfAngle = std::clamp(
-            maximumOffset + gaussianRadius * maximumSigma,
+            paperGaussianSupportAngle(options.deposition,gaussianRadius),
             1.0e-6,
             1.5533430342749532);
         const double coneSlope = std::tan(halfAngle);

@@ -84,6 +84,9 @@ namespace spraythickness::opengl
         m_active = false;
         m_metadata = {};
         if(!task.options.evaluateMeshSampling) return false;
+        if(!task.options.deposition.gaussianComponents.empty()){
+            disable("Mesh density assessment currently requires a single Gaussian core footprint.");return false;
+        }
         m_metadata.gpuIntegrated = true;
         const auto start = Clock::now();
         try {

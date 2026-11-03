@@ -1062,6 +1062,8 @@ namespace spraythickness::opengl
                 appendHashBytes(hash, &sample.time, sizeof(sample.time));
                 appendHashBytes(hash, &sample.duration, sizeof(sample.duration));
             }
+            const std::size_t componentCount=deposition.gaussianComponents.size();appendHashBytes(hash,&componentCount,sizeof(componentCount));
+            for(const auto& c:deposition.gaussianComponents){const double values[]={c.coefficient,c.phi0,c.psi0,c.sigmaPhi,c.sigmaPsi};appendHashBytes(hash,values,sizeof(values));}
             appendHashBytes(
                 hash,
                 &deposition.rotationRadians,
@@ -1676,6 +1678,13 @@ namespace spraythickness::opengl
             program.setFloat("patternRotation", static_cast<float>(deposition.rotationRadians));
             program.setFloat("phiOffset", static_cast<float>(deposition.phiOffsetRadians));
             program.setFloat("psiOffset", static_cast<float>(deposition.psiOffsetRadians));
+            if(deposition.gaussianComponents.size()>16)throw std::runtime_error("GPU prediction supports at most 16 Gaussian components.");
+            program.setInt("gaussianCount",static_cast<int>(deposition.gaussianComponents.size()));
+            for(std::size_t i=0;i<deposition.gaussianComponents.size();++i){const auto& c=deposition.gaussianComponents[i];
+                const auto shape="gaussianShape["+std::to_string(i)+"]",coefficient="gaussianCoefficient["+std::to_string(i)+"]";
+                glUniform4f(program.uniformLocation(shape.c_str()),float(c.phi0),float(c.psi0),float(c.sigmaPhi),float(c.sigmaPsi));
+                program.setFloat(coefficient.c_str(),float(c.coefficient));
+            }
             program.setFloat("sigmaPhi", static_cast<float>(deposition.sigmaPhiRadians));
             program.setFloat("sigmaPsi", static_cast<float>(deposition.sigmaPsiRadians));
             program.setFloat("referenceDistanceMm", referenceDistanceMillimeters);
@@ -1709,6 +1718,16 @@ namespace spraythickness::opengl
             program.setInt("useCalibratedEfficiencies", deposition.useCalibratedEfficiencies?1:0);
             if(deposition.useCalibratedEfficiencies) {
                 program.setCalibratedCurves(deposition.distanceEfficiency,deposition.angleEfficiency);
+            }
+            program.setInt("useCalibratedDensity",deposition.useCalibratedDensity?1:0);
+            if(deposition.useCalibratedDensity){
+                program.setDensityCurves(deposition.distanceDensity,deposition.angleDensity);
+                program.setFloat("densityDistanceMinMm",float(deposition.densityDistanceMinMm));
+                program.setFloat("densityDistanceMaxMm",float(deposition.densityDistanceMaxMm));
+                program.setFloat("densityAngleMinDegrees",float(deposition.densityAngleMinDegrees));
+                program.setFloat("densityAngleMaxDegrees",float(deposition.densityAngleMaxDegrees));
+                program.setFloat("referenceDensityProduct",float(evaluateCalibratedEfficiency(deposition.distanceDensity,referenceDistanceMillimeters)
+                    *evaluateCalibratedEfficiency(deposition.angleDensity,referenceAngle)));
             }
             program.setInt("continuousHistoryInput",history.continuousInput?1:0);
             program.setFloat("referencePeakRate",static_cast<float>(history.referencePeakRateMillimetersPerSecond));
@@ -2050,7 +2069,7 @@ namespace spraythickness::opengl
 
             const std::size_t vertexCount = computationWorkpiece.samples.size();
             std::vector<float> thickness(vertexCount, 0.0f);
-            std::vector<float> historyTau(vertexCount, 0.0f);
+            std::vector<float> historyTau(vertexCount, static_cast<float>(task.options.initialHistorySeconds));
             std::vector<float> lastUpdateTime(
                 vertexCount,
                 static_cast<float>(allSpraySamples.front().time[0]));
@@ -2683,7 +2702,7 @@ void main() {
         const LegacyGpuBvhNode dummyNode{};
         const std::uint32_t dummyIndex = 0;
         std::vector<float> thickness(vertexCount, 0.0f);
-        std::vector<float> historyTau(vertexCount, 0.0f);
+        std::vector<float> historyTau(vertexCount, static_cast<float>(task.options.initialHistorySeconds));
         std::vector<float> lastUpdateTime(vertexCount, 0.0f);
         std::vector<float> historyFactor(vertexCount, 1.0f);
         BackendGpuResources& resources = m_impl->resources;
@@ -3364,7 +3383,7 @@ void main() {
         const std::size_t vertexCount = task.workpiece.samples.size();
         const std::size_t predictionVertexCount = predictionVertexIndices.size();
         std::vector<float> thickness(vertexCount, 0.0f);
-        std::vector<float> historyTau(vertexCount, 0.0f);
+        std::vector<float> historyTau(vertexCount, static_cast<float>(task.options.initialHistorySeconds));
         std::vector<float> lastUpdateTime(
             vertexCount,
             static_cast<float>(allSpraySamples.front().time[0]));

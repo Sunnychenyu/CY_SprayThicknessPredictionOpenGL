@@ -31,11 +31,16 @@ namespace spraythickness::opengl
 
     void OpenGLComputeProgram::setCalibratedCurves(const CalibratedEfficiencyCurve& distance,const CalibratedEfficiencyCurve& angle) const {
         if(m_curvesUploaded && m_distanceCurve==distance && m_angleCurve==angle)return;
-        const auto upload=[this](const char* prefix,const CalibratedEfficiencyCurve& curve){
+        uploadCurve("distance",distance);uploadCurve("angle",angle);
+        m_distanceCurve=distance;m_angleCurve=angle;m_curvesUploaded=true;
+    }
+
+    void OpenGLComputeProgram::uploadCurve(const char* prefix,const CalibratedEfficiencyCurve& curve) const {
             if(curve.x.size()>128 || curve.x.size()!=curve.y.size())
                 throw std::invalid_argument("Efficiency interpolation requires at most 128 matching nodes.");
             const std::string name(prefix);
             setInt((name+"CurveKind").c_str(),static_cast<int>(curve.kind));
+            setFloat((name+"CurveLowerRampEnd").c_str(),float(curve.lowerRampEnd));
             setInt((name+"CurveCount").c_str(),static_cast<int>(curve.x.size()));
             float parameters[6]{};
             for(std::size_t i=0;i<curve.parameters.size() && i<6;++i)parameters[i]=float(curve.parameters[i]);
@@ -43,9 +48,12 @@ namespace spraythickness::opengl
             std::vector<float> nodes;nodes.reserve(curve.x.size()*2);
             for(std::size_t i=0;i<curve.x.size();++i){nodes.push_back(float(curve.x[i]));nodes.push_back(float(curve.y[i]));}
             if(!nodes.empty())glUniform2fv(uniformLocation((name+"CurveNodes[0]").c_str()),int(curve.x.size()),nodes.data());
-        };
-        upload("distance",distance);upload("angle",angle);
-        m_distanceCurve=distance;m_angleCurve=angle;m_curvesUploaded=true;
+        }
+    void OpenGLComputeProgram::setDensityCurves(const CalibratedEfficiencyCurve& distance,const CalibratedEfficiencyCurve& angle) const {
+        if(distance.x.size()>32 || angle.x.size()>32)throw std::invalid_argument("GPU density interpolation supports at most 32 nodes per curve.");
+        if(m_densityUploaded && m_densityDistanceCurve==distance && m_densityAngleCurve==angle)return;
+        uploadCurve("densityDistance",distance);uploadCurve("densityAngle",angle);
+        m_densityDistanceCurve=distance;m_densityAngleCurve=angle;m_densityUploaded=true;
     }
 
     OpenGLComputeProgram::OpenGLComputeProgram(const char* source, const char* debugName)

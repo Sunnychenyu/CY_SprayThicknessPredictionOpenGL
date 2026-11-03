@@ -44,14 +44,8 @@ namespace spraythickness::opengl
                 1.0e-12,
                 0.999999);
             const double gaussianRadius = std::sqrt(-2.0 * std::log(cutoff));
-            const double maximumSigma = std::max(
-                std::abs(deposition.sigmaPhiRadians),
-                std::abs(deposition.sigmaPsiRadians));
-            const double maximumOffset = std::max(
-                std::abs(deposition.phiOffsetRadians),
-                std::abs(deposition.psiOffsetRadians));
             const double halfAngle = std::clamp(
-                maximumOffset + gaussianRadius * maximumSigma,
+                paperGaussianSupportAngle(deposition,gaussianRadius),
                 1.0e-6,
                 1.5533430342749532);
             return std::tan(halfAngle);
@@ -158,9 +152,9 @@ namespace spraythickness::opengl
             / std::max(std::abs(deposition.sigmaPhiRadians), 1.0e-12);
         const double normalizedPsi = rotatedPsi
             / std::max(std::abs(deposition.sigmaPsiRadians), 1.0e-12);
-        const double pattern = std::exp(-0.5 * (
+        const double pattern = deposition.gaussianComponents.empty()?std::exp(-0.5 * (
             normalizedPhi * normalizedPhi
-            + normalizedPsi * normalizedPsi));
+            + normalizedPsi * normalizedPsi)):paperGaussianPattern(deposition,phi+deposition.phiOffsetRadians,psi+deposition.psiOffsetRadians);
         return pattern >= std::clamp(
             contributionCutoffRatio,
             1.0e-12,

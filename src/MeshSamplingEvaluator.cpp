@@ -541,6 +541,10 @@ namespace spraythickness::opengl
             result.unavailableReason = "Triangle topology is required to distinguish a missed footprint from coarse sampling.";
             return finish();
         }
+        if(!task.options.deposition.gaussianComponents.empty()) {
+            result.unavailableReason = "Mesh density assessment currently requires a single Gaussian core footprint.";
+            return finish();
+        }
         if(!CoreFootprint(task.options.deposition, result.corePatternRatio).valid) {
             result.unavailableReason = "Gaussian angular parameters cannot define a forward core footprint.";
             return finish();

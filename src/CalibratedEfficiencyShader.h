@@ -6,8 +6,9 @@ uniform bool useCalibratedEfficiencies;
 uniform bool efficiencyIncludesGeometry;
 uniform int distanceCurveKind,angleCurveKind,distanceCurveCount,angleCurveCount;
 uniform float distanceCurveParameters[6],angleCurveParameters[6];
+uniform float distanceCurveLowerRampEnd,angleCurveLowerRampEnd;
 uniform vec2 distanceCurveNodes[128],angleCurveNodes[128];
-float calibratedEfficiency(bool isDistance,float x){
+float calibratedEfficiencyRaw(bool isDistance,float x){
     int k=isDistance?distanceCurveKind:angleCurveKind;
     float p[6];for(int i=0;i<6;++i)p[i]=isDistance?distanceCurveParameters[i]:angleCurveParameters[i];
     if(k==0)return 1.;
@@ -33,8 +34,31 @@ float calibratedEfficiency(bool isDistance,float x){
         if(x<=next.x)return mix(prev.y,next.y,(x-prev.x)/max(next.x-prev.x,1e-9));prev=next;}
     return prev.y;
 }
+float calibratedEfficiency(bool isDistance,float x){
+    float lower=isDistance?distanceCurveLowerRampEnd:angleCurveLowerRampEnd;
+    if(lower>0. && x<lower)
+        return max(0.,calibratedEfficiencyRaw(isDistance,lower))*max(0.,x)/lower;
+    return calibratedEfficiencyRaw(isDistance,x);
+}
 )GLSL";
 inline std::string addCalibratedEfficiencyShader(std::string source){
-    const auto at=source.find("vec3 safeNormalize");source.insert(at,kCalibratedEfficiencyShader);return source;
+    std::string density(kCalibratedEfficiencyShader);
+    const auto rename=[&](const std::string& from,const std::string& to){
+        std::size_t at=0;while((at=density.find(from,at))!=std::string::npos){density.replace(at,from.size(),to);at+=to.size();}
+    };
+    rename("useCalibratedEfficiencies","useCalibratedDensity");rename("efficiencyIncludesGeometry","densityUnusedGeometry");
+    rename("distanceCurve","densityDistanceCurve");rename("angleCurve","densityAngleCurve");
+    rename("calibratedEfficiency","calibratedDensity");rename("[128]","[32]");
+    density+=R"GLSL(
+uniform float densityDistanceMinMm,densityDistanceMaxMm,densityAngleMinDegrees,densityAngleMaxDegrees;
+uniform float referenceDensityProduct;
+float densityThicknessScale(float distanceMm,float angleDegrees){
+    if(!useCalibratedDensity)return 1.;
+    float d=calibratedDensity(true,clamp(distanceMm,densityDistanceMinMm,densityDistanceMaxMm));
+    float a=calibratedDensity(false,clamp(angleDegrees,densityAngleMinDegrees,densityAngleMaxDegrees));
+    return referenceDensityProduct/max(d*a,1e-12);
+}
+)GLSL";
+    const auto at=source.find("vec3 safeNormalize");source.insert(at,std::string(kCalibratedEfficiencyShader)+density);return source;
 }
 }
