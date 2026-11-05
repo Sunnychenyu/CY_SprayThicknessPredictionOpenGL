@@ -4,6 +4,7 @@
 #include <SprayThicknessPredictionOpenGL/AxisymmetricProfileReduction.h>
 
 #include "OpenGLComputeProgram.h"
+#include "DynamicSurfaceGpu.h"
 #include "GpuMeshSampling.h"
 #include "PaperGaussianHistoryShader.h"
 #include "PeriodicSectorReduction.h"
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -1365,6 +1367,7 @@ namespace spraythickness::opengl
             GpuBuffer(const GpuBuffer&) = delete;
             GpuBuffer& operator=(const GpuBuffer&) = delete;
             std::size_t size() const { return m_size; }
+            unsigned int id() const { return m_id; }
 
             void bind(unsigned int binding) const
             {
@@ -2679,6 +2682,8 @@ void main() {
 
     void OpenGLThicknessPredictionBackend::beginOnline(ThicknessPredictionTask task)
     {
+        if(task.options.dynamicSurface.enabled)
+            throw std::runtime_error("Dynamic surface is available in offline prediction and simulation only.");
         if(task.model != ThicknessModelKind::PaperGaussian
             || task.workpiece.samples.empty()
             || task.workpiece.triangleIndices.empty()
@@ -3150,9 +3155,29 @@ void main() {
     }
 
     ThicknessPredictionResult OpenGLThicknessPredictionBackend::predict(
-        const ThicknessPredictionTask& task,
+        const ThicknessPredictionTask& requestedTask,
         const ThicknessPredictionExecution& requestedExecution)
     {
+        const auto totalStart = std::chrono::steady_clock::now();
+        std::optional<ThicknessPredictionTask> dynamicTask;
+        if(requestedTask.options.dynamicSurface.enabled) {
+            const auto& o = requestedTask.options;
+            if(o.periodicLocal.enabled || o.axisymmetricProfile.enabled || o.spatialFiltering.enabled)
+                throw std::runtime_error("Dynamic surface requires complete-model prediction.");
+            const auto& d = o.dynamicSurface;
+            if(!std::isfinite(d.maximumGrowthMeters) || d.maximumGrowthMeters <= 0
+                || !std::isfinite(d.maximumNormalChangeDegrees) || d.maximumNormalChangeDegrees <= 0
+                || d.maximumNormalChangeDegrees >= 90 || !std::isfinite(d.maximumIntervalSeconds)
+                || d.maximumIntervalSeconds <= 0)
+                throw std::runtime_error("Invalid dynamic surface accuracy settings.");
+            reportProgress(requestedExecution,0.01,"Preparing dynamic surface topology");
+            dynamicTask = requestedTask;
+            DynamicSurfaceGpu::prepareSurface(dynamicTask->workpiece);
+            dynamicTask->options.evaluateMeshSampling = false;
+            dynamicTask->options.base.trajectorySamplingMode = TrajectorySamplingMode::ResampleByTimeStep;
+            dynamicTask->options.base.timeStep = std::min(std::max(1e-5,o.base.timeStep),d.maximumIntervalSeconds);
+        }
+        const ThicknessPredictionTask& task = dynamicTask ? *dynamicTask : requestedTask;
         ThicknessPredictionExecution execution = requestedExecution;
         if(task.options.evaluateMeshSampling && requestedExecution.progress) {
             execution.progress = [progress = requestedExecution.progress](double value, const std::string& message) {
@@ -3161,10 +3186,11 @@ void main() {
         }
         // Offline dispatches reuse these bindings and invalidate prepared online geometry.
         endOnline();
-        const auto totalStart = std::chrono::steady_clock::now();
         validateTask(task);
         checkOpenGlErrors("prediction start");
         const GpuCapabilities& capabilities = m_impl->deviceCapabilities();
+        if(task.options.dynamicSurface.enabled && capabilities.maximumStorageBufferBindings < 13)
+            throw std::runtime_error("Dynamic surface requires 13 OpenGL storage buffer bindings.");
         reportProgress(
             execution,
             0.02,
@@ -3357,7 +3383,14 @@ void main() {
                 reportProgress(execution, progress, message.c_str());
             };
         const auto bvhStart = std::chrono::steady_clock::now();
-        const auto bvh = preparePredictionBvh(task, meshSampling, bvhProgress);
+        const auto bvh = [&]() {
+            if(task.options.dynamicSurface.enabled && !task.options.enableBvhOcclusion) {
+                auto geometryTask = task;
+                geometryTask.options.enableBvhOcclusion = true;
+                return preparePredictionBvh(geometryTask, meshSampling, bvhProgress);
+            }
+            return preparePredictionBvh(task, meshSampling, bvhProgress);
+        }();
         const double bvhMilliseconds = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - bvhStart).count();
         reportProgress(execution, 0.15, "Thickness BVH ready");
@@ -3452,7 +3485,7 @@ void main() {
             task.options.enableBvhOcclusion,
             task.options.enableHistoryCorrection,
             predictionVertexCount,
-            1.0);
+            1.0) ^ (task.options.dynamicSurface.enabled ? 0x44594e414d494301ULL : 0ULL);
         AdaptiveBatchSelector batchSelector(
             batchProfileKey,
             maximumBatch,
@@ -3460,6 +3493,15 @@ void main() {
         std::vector<SprayGpuSample> batchStorage(maximumBatch);
         sprayBuffer.upload(2, batchStorage.data(), batchStorage.size() * sizeof(SprayGpuSample), GL_DYNAMIC_DRAW);
 
+        std::unique_ptr<DynamicSurfaceGpu> evolution;
+        std::shared_ptr<const DynamicSurfaceSnapshot> evolvedSurface;
+        if(task.options.dynamicSurface.enabled) {
+            std::array<unsigned int, 11> ids{};
+            for(unsigned int i = 0; i < ids.size(); ++i) ids[i] = m_impl->resources.buffer(i).id();
+            evolution = std::make_unique<DynamicSurfaceGpu>(task.workpiece,
+                task.options.dynamicSurface, *bvh, ids);
+            program.use();
+        }
         const int sprayPointCountLocation = program.uniformLocation("sprayPointCount");
         const auto dispatchStart = std::chrono::steady_clock::now();
         GpuElapsedQuery gpuElapsedQuery;
@@ -3474,7 +3516,107 @@ void main() {
                 + ", renderer=" + capabilities.renderer).c_str());
         std::size_t begin = 0;
         std::size_t batch = 0;
-        while(begin < spraySamples.size()) {
+        if(evolution) {
+            const auto canceledResult=[] {
+                ThicknessPredictionResult result;
+                result.warnings.push_back("Thickness prediction was canceled.");
+                return result;
+            };
+            double time = previewSpraySamples.front().time;
+            const double origin = time;
+            const double endTime = previewSpraySamples.back().time + previewSpraySamples.back().duration;
+            double step = task.options.dynamicSurface.maximumIntervalSeconds;
+            auto lastPreview = std::chrono::steady_clock::now();
+            std::vector<SprayGpuSample> interval;
+            const auto trajectoryPoints = spraytrajectory::SprayTrajectorySampler::originalSamples(task.trajectory);
+            const auto toolFrameAt = [&](double t) {
+                const auto upper = std::upper_bound(trajectoryPoints.begin(),trajectoryPoints.end(),t,
+                    [](double time,const spraytrajectory::SprayTrajectorySample& point){return time<point.time;});
+                const auto first = upper==trajectoryPoints.begin()?upper:std::prev(upper);
+                Eigen::Isometry3d pose=first->tcpPose;
+                if(upper!=trajectoryPoints.end() && upper->time>first->time) {
+                    const double u=std::clamp((t-first->time)/(upper->time-first->time),0.0,1.0);
+                    pose.translation()=(1-u)*first->tcpPose.translation()+u*upper->tcpPose.translation();
+                    pose.linear()=Eigen::Quaterniond(first->tcpPose.linear()).slerp(u,Eigen::Quaterniond(upper->tcpPose.linear())).toRotationMatrix();
+                }
+                return Eigen::Isometry3d(pose*task.tool.T_link_tool);
+            };
+            // Physical steps are independent of the GPU batch/profile size.
+            while(begin < previewSpraySamples.size()) {
+                if(canceled(execution)) return canceledResult();
+                time = std::max(time, previewSpraySamples[begin].time);
+                const double end = std::min(time + step, endTime);
+                evolution->checkpoint();
+                interval.clear();
+                for(std::size_t i = begin; i < previewSpraySamples.size() && previewSpraySamples[i].time < end; ++i) {
+                    const auto& source = previewSpraySamples[i];
+                    const double a = std::max(time, source.time);
+                    const double b = std::min(end, source.time + source.duration);
+                    if(b <= a) continue;
+                    auto point = allSpraySamples[i];
+                    const auto pose=toolFrameAt((a+b)*0.5);
+                    const Eigen::Vector3d direction=task.tool.worldSprayDirection(pose).normalized();
+                    Eigen::Vector3d major=pose.linear()*task.tool.powderFeedDirectionLocal;
+                    major-=major.dot(direction)*direction;
+                    if(major.squaredNorm()<1e-20) major=direction.unitOrthogonal();
+                    else major.normalize();
+                    const Eigen::Vector3d minor=direction.cross(major).normalized();
+                    for(int axis=0;axis<3;++axis) {
+                        point.positionAndDt[axis]=static_cast<float>(pose.translation()[axis]*1000);
+                        point.direction[axis]=static_cast<float>(direction[axis]);
+                        point.majorAxis[axis]=static_cast<float>(major[axis]);
+                        point.minorAxis[axis]=static_cast<float>(minor[axis]);
+                    }
+                    point.positionAndDt[3] = static_cast<float>(b-a);
+                    point.time[0] = static_cast<float>(a);
+                    interval.push_back(point);
+                }
+                program.use();
+                for(std::size_t offset = 0; offset < interval.size();) {
+                    if(canceled(execution)) { evolution->rollback(); return canceledResult(); }
+                    const auto count = batchSelector.next(interval.size()-offset);
+                    const auto started = std::chrono::steady_clock::now();
+                    sprayBuffer.update(interval.data()+offset,count*sizeof(SprayGpuSample));
+                    glUniform1i(sprayPointCountLocation,static_cast<int>(count));
+                    glDispatchCompute(static_cast<unsigned int>((vertexCount+255)/256),1,1);
+                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+                    if(batchSelector.measuring()) {
+                        glFinish();
+                        batchSelector.record(count,count*static_cast<std::uint64_t>(vertexCount),
+                            std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
+                    }
+                    offset += count;
+                }
+                if(!evolution->tryAdvance()) {
+                    step *= evolution->nextIntervalScale();
+                    if(step < 1.0e-6 || time + step == time)
+                        throw std::runtime_error("Dynamic surface cannot advance: mesh contact, inversion, or growth below numeric resolution. Refine the mesh or reduce deposition.");
+                    continue;
+                }
+                evolution->rebuildIfNeeded([&](const ThicknessBvh& rebuilt) {
+                    const auto updated=makeLegacyGpuBvh(rebuilt);
+                    bvhBuffer.upload(4,updated.nodes.data(),updated.nodes.size()*sizeof(LegacyGpuBvhNode),GL_DYNAMIC_COPY);
+                    orderBuffer.upload(5,updated.leafTriangleIndices.data(),updated.leafTriangleIndices.size()*sizeof(std::uint32_t),GL_STATIC_DRAW);
+                });
+                time = end;
+                while(begin < previewSpraySamples.size()
+                    && previewSpraySamples[begin].time + previewSpraySamples[begin].duration <= time + 1.0e-10) ++begin;
+                step = std::min(step*evolution->nextIntervalScale(),task.options.dynamicSurface.maximumIntervalSeconds);
+                const auto now = std::chrono::steady_clock::now();
+                if(now-lastPreview >= std::chrono::milliseconds(200)) {
+                    const double elapsed=std::chrono::duration<double>(now-totalStart).count();
+                    reportProgress(execution,0.20+0.75*(time-origin)/std::max(1.0e-12,endTime-origin),
+                        (std::string("Dynamic surface: ")+std::to_string(time-origin)+" s; elapsed "+std::to_string(elapsed)+" s").c_str());
+                    if(execution.surfacePreview) execution.surfacePreview(evolution->snapshot(time-origin,elapsed));
+                    lastPreview=now;
+                }
+            }
+            if(canceled(execution)) return canceledResult();
+            evolvedSurface=evolution->snapshot(time-origin,
+                std::chrono::duration<double>(std::chrono::steady_clock::now()-totalStart).count(),true);
+            checkOpenGlErrors("dynamic surface evolution");
+        }
+        while(!evolution && begin < spraySamples.size()) {
             if(canceled(execution)) {
                 ThicknessPredictionResult result;
                 result.warnings.push_back("Thickness prediction was canceled.");
@@ -3573,6 +3715,7 @@ void main() {
         result.field.updateErrors();
         result.metrics = ThicknessMetricsCalculator::calculate(result.field, task.options.base);
         result.warnings = std::move(predictionWarnings);
+        result.dynamicSurface = std::move(evolvedSurface);
         const double downloadMilliseconds = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - downloadStart).count();
         if(meshSampling.active()) {
