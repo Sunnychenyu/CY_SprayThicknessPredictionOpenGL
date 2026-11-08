@@ -10,6 +10,7 @@ set(SOURCES
     src/OpenGLThicknessPredictionBackend.cpp
     src/AxisymmetricProfileReduction.cpp
     src/PaperGaussianHistoryShader.h
+    src/CalibrationComputeShaders.h
     src/PeriodicSectorMappingShader.h
     src/PeriodicSectorReduction.cpp
     src/PeriodicSectorReduction.h
@@ -25,6 +26,7 @@ set(SOURCES
 
 set(INTERFACE_HEADERS
     include/${TARGET_NAME}/OpenGLThicknessPredictionBackend.h
+    include/${TARGET_NAME}/OpenGLCalibrationEvaluator.h
     include/${TARGET_NAME}/AxisymmetricProfileReduction.h
     include/${TARGET_NAME}/PeriodicSectorReduction.h
     include/${TARGET_NAME}/SpatialInfluenceFiltering.h

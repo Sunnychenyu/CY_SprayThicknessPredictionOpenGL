@@ -13,7 +13,16 @@ namespace spraythickness::opengl
 #ifndef THICKNESS_ENABLE_HISTORY
 #define THICKNESS_ENABLE_HISTORY 1
 #endif
+#ifndef THICKNESS_FIT_CACHE
+#define THICKNESS_FIT_CACHE 0
+#endif
 layout(local_size_x = 256) in;
+#if THICKNESS_FIT_CACHE
+layout(std430, binding = 11) buffer FitRateBuffer { vec4 fitRates[]; };
+uniform int fitPoseBegin;
+uniform int fitPoseEnd;
+uniform int fitVertexBegin,fitVertexEnd;
+#endif
 
 struct BvhNode {
     vec4 minimum;
@@ -211,6 +220,16 @@ float patternValue(float uMm, float vMm, float axialDistanceMm) {
     return exp(-0.5 * dot(coordinate, coordinate));
 }
 
+// Shared physical rate law for prediction and resident calibration fields.
+float incidentRate(float sprayDistance,float cosineIncidence,float pattern,out float angleDegrees) {
+    angleDegrees=90.0-degrees(acos(clamp(cosineIncidence,-1.0,1.0)));
+    float geometryScale=referenceDistanceSquared/max(sprayDistance*sprayDistance,1e-12)
+        *max(1e-6,cosineIncidence)/referenceProjection;
+    if(efficiencyIncludesGeometry)geometryScale=1.0;
+    return peakScale*geometryScale*(distanceEfficiency(sprayDistance)/referenceDistanceEfficiency)
+        *(angleEfficiency(angleDegrees)/referenceAngleEfficiency)*pattern;
+}
+
 // MESH_SAMPLING_FUNCTIONS
 float correctionFactor(float tau) {
     float scale = max(historyScaleSeconds, 1e-6);
@@ -221,6 +240,10 @@ float correctionFactor(float tau) {
 void evaluateThicknessVertex() {
     uint predictionVertex = gl_GlobalInvocationID.x;
     if(predictionVertex >= uint(predictionVertexCount)) return;
+#if THICKNESS_FIT_CACHE
+    predictionVertex+=uint(fitVertexBegin);
+    if(predictionVertex>=uint(fitVertexEnd))return;
+#endif
     uint vertex = usePredictionVertexBuffer
         ? predictionVertices[predictionVertex]
         : predictionVertex;
@@ -230,11 +253,21 @@ void evaluateThicknessVertex() {
         surfaceData[vertex * 2u + 1u].xyz,
         vec3(0.0, 0.0, 1.0));
     float accumulated = 0.0;
+#if !THICKNESS_FIT_CACHE
     float tau = historyTau[vertex];
     float lastTime = lastUpdateTime[vertex];
     float factor = historyFactor[vertex];
+#else
+    float tau=0.0,lastTime=0.0,factor=1.0;
+#endif
 
+    #if THICKNESS_FIT_CACHE
+    for(int point = fitPoseBegin; point < fitPoseEnd; ++point) {
+        uint fitIndex=(vertex-uint(fitVertexBegin))*uint(sprayPointCount)+uint(point);
+        fitRates[fitIndex]=vec4(0.0);
+#else
     for(int point = 0; point < sprayPointCount; ++point) {
+#endif
         int base = point * 5;
         vec3 sprayPosition = sprayData[base].xyz;
         float dt = max(0.0, sprayData[base].w);
@@ -268,18 +301,8 @@ void evaluateThicknessVertex() {
             dot(sprayToVertex, minorAxis), axialDistance);
 #endif
         if(pattern <= 0.0) continue;
-        float angleDegrees = 90.0 - degrees(acos(clamp(cosineIncidence, -1.0, 1.0)));
-        float projection = max(1e-6, cosineIncidence);
-        float distanceSquared = max(dot(sprayToVertex, sprayToVertex), 1.0e-12);
-        float geometryScale = referenceDistanceSquared / distanceSquared
-            * projection / referenceProjection;
-        if(efficiencyIncludesGeometry)geometryScale=1.0;
-        float distanceScale = distanceEfficiency(sprayDistance)
-            / referenceDistanceEfficiency;
-        float angleScale = angleEfficiency(angleDegrees) / referenceAngleEfficiency;
-        float peak = peakScale * geometryScale * distanceScale * angleScale
-            * dt;
-        float baseThickness = peak * pattern;
+        float angleDegrees=0.0;
+        float baseThickness=incidentRate(sprayDistance,cosineIncidence,pattern,angleDegrees)*dt;
         if(baseThickness <= 0.0) continue;
 #if THICKNESS_ENABLE_BVH
         // Visibility cannot change an exactly zero contribution. Reject it
@@ -291,6 +314,11 @@ void evaluateThicknessVertex() {
 #endif
 #endif
 
+#if THICKNESS_FIT_CACHE
+        fitRates[fitIndex]=vec4(baseThickness*densityThicknessScale(sprayDistance,angleDegrees)*1000.0,
+            baseThickness*1000.0,pattern,0.0);
+        continue;
+#endif
 #if THICKNESS_ENABLE_HISTORY
         {
             tau *= exp(-max(0.0, currentTime - lastTime) / max(coolingTimeSeconds, 1e-6));
@@ -300,7 +328,7 @@ void evaluateThicknessVertex() {
                 float x=dt/max(coolingTimeSeconds,1e-6);
                 float injection=x<1e-3?x*(1.0-x*0.5+x*x/6.0):1.0-exp(-x);
                 tau+=coolingTimeSeconds*injection*w;
-            } else if(baseThickness >= activityThresholdRatio * peak) tau += dt;
+            } else if(pattern >= activityThresholdRatio) tau += dt;
             factor = correctionFactor(tau);
         }
 #else
@@ -310,10 +338,25 @@ void evaluateThicknessVertex() {
         lastTime = currentTime;
     }
 
+#if THICKNESS_ENABLE_HISTORY
+    // Occluded/back-facing intervals add neither coating nor direct heat.
+    // Advance existing history to the batch end even if no vertex contribution
+    // was accepted. Delayed cooling between visible events remains equivalent.
+    if(sprayPointCount > 0) {
+        int endBase = (sprayPointCount - 1) * 5;
+        float endTime = sprayData[endBase + 4].x
+            + (continuousHistoryInput != 0 ? max(0.0, sprayData[endBase].w) : 0.0);
+        tau *= exp(-max(0.0, endTime - lastTime) / max(coolingTimeSeconds, 1e-6));
+        lastTime = max(lastTime, endTime);
+        factor = correctionFactor(tau);
+    }
+#endif
+#if !THICKNESS_FIT_CACHE
     thickness[vertex] += accumulated;
     historyTau[vertex] = tau;
     lastUpdateTime[vertex] = lastTime;
     historyFactor[vertex] = factor;
+#endif
 }
 
 void main() {

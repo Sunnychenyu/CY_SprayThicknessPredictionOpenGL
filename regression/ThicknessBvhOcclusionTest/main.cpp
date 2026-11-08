@@ -1,5 +1,6 @@
 #include <SprayThicknessPredictionOpenGL/OpenGLThicknessPredictionBackend.h>
 #include <SprayThicknessPredictionOpenGL/ThicknessBvh.h>
+#include <SprayThicknessPredictionOpenGL/OpenGLCalibrationEvaluator.h>
 #include <GLRuntime/GLRuntime.h>
 
 #include <QGuiApplication>
@@ -119,6 +120,52 @@ namespace
                   << " lowerAfter=" << lowerAfter << '\n';
         return top > 0.0 && lowerBefore > 0.0
             && std::abs(lowerAfter) < 1.0e-12;
+    }
+
+    bool verifyRestrictedReceivers(bool spatial)
+    {
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        auto task=makeTask(spatial,true);
+        const auto full=backend.predict(task);
+        // The upper plane must occlude the lower receiver even though most of
+        // its vertices are excluded from prediction. Use a non-prefix order.
+        task.options.spatialFiltering.predictionVertexIndices={13,5};
+        const auto selected=backend.predict(task);
+        if(selected.timing.predictionVertexCount!=2 || selected.field.results[13].thickness!=0) return false;
+        const double expected=full.field.results[5].thickness;
+        if(expected<=0 || std::abs(selected.field.results[5].thickness-expected)>expected*1e-5) return false;
+        for(std::size_t i=0;i<selected.field.results.size();++i)
+            if(i!=5 && selected.field.results[i].thickness!=0) return false;
+        task.options.enableBvhOcclusion=false;
+        const auto unblocked=backend.predict(task);
+        return unblocked.field.results[13].thickness>0;
+    }
+
+    bool verifyShadowedHeatHistory(bool spatial)
+    {
+        auto task=makeTask(spatial,true);task.options.enableHistoryCorrection=true;
+        auto& p=task.options.deposition;p.useCalibratedHistory=true;p.useCalibratedEfficiencies=true;
+        p.distanceEfficiency.kind=p.angleEfficiency.kind=spraythickness::EfficiencyCurveKind::Unit;
+        p.rotationRadians=p.phiOffsetRadians=p.psiOffsetRadians=0;
+        auto& h=p.calibratedHistory;h.continuousInput=true;h.referencePeakRateMillimetersPerSecond=p.amplitudeMillimeters;
+        h.historyScaleSeconds=.05;h.coolingTimeSeconds=.2;h.referenceHistorySeconds=.03;h.correctionAmplitude=.4;
+        auto& points=task.trajectory.segments.front().points;const auto prototype=points.front();points.clear();
+        const double times[]={0,.02,1.02,1.04};
+        for(int i=0;i<4;++i){auto point=prototype;point.time=times[i];point.sprayEnabled=i<3;
+            // Below the upper plate: visible. Above it: the lower plate is shaded.
+            point.tcpPose.translation().z()=i==1?.12:-.005;points.push_back(point);}
+        const double rate=spraythickness::paperGaussianRateMillimeters(p,10,90,0,0);
+        const double input=std::clamp(rate/h.referencePeakRateMillimetersPerSecond,0.0,1.0);
+        double tau=0;
+        double expected=spraythickness::applyPaperGaussianHistory(rate,input,.02,.02,tau,h);
+        expected+=spraythickness::applyPaperGaussianHistory(rate,input,.02,1.02,tau,h);
+        spraythickness::opengl::OpenGLThicknessPredictionBackend backend;
+        for(std::size_t batch:{std::size_t(1),std::size_t(3)}){
+            task.options.trajectoryBatchSize=batch;
+            const auto result=backend.predict(task);
+            if(std::abs(result.field.results[13].thickness-expected*.001)>std::max(1e-11,expected*2e-7))return false;
+        }
+        return true;
     }
 
     bool verifyOnlineAccumulation()
@@ -469,6 +516,89 @@ namespace
             && std::abs(secondTop - 2.0 * firstTop)
                 < std::max(firstTop * 1.0e-4, 1.0e-12);
     }
+
+    bool verifyGpuCalibration()
+    {
+        using namespace spraythickness;
+        using namespace spraythickness::opengl;
+        const auto kernels=createCalibrationKernels();
+        CalibrationFieldInput input;input.initialHistorySeconds=.2;
+        input.spray={{{0,0,120,1}},{{0,0,-1,0}},{{1,0,0,0}},{{0,-1,0,0}},{{0,0,0,0}}};
+        for(int j=0;j<503;++j)input.events.push_back({{0,.01,.01*(j+1)+(j>=250?.7:0),0}});
+        for(int i=0;i<259;++i){
+            input.surface.push_back({{float((i%23)-11),float((i/23)-5),0,0}});
+            input.surface.push_back({{0,0,1,0}});input.observedUm.push_back(20+i*.3);
+        }
+        PaperGaussianParameters model;model.amplitudeMillimeters=.5;model.referenceDistanceMeters=.12;
+        model.referenceExposureSeconds=1;model.referenceAngleDegrees=90;model.rotationRadians=0;
+        model.phiOffsetRadians=model.psiOffsetRadians=0;model.sigmaPhiRadians=.02;model.sigmaPsiRadians=.035;
+        model.useCalibratedEfficiencies=true;model.distanceEfficiency={};model.angleEfficiency={};model.useCalibratedDensity=false;
+        OpenGLCalibrationField field(model,input,{},kernels);
+        HeatHistoryParameters h;h.continuousInput=true;h.referencePeakRateMillimetersPerSecond=.5;
+        h.historyScaleSeconds=.8;h.coolingTimeSeconds=.2;h.referenceHistorySeconds=.4;
+        std::vector<double> original;
+        for(double amplitude:{.6,-.3,.6}){
+            h.correctionAmplitude=amplitude;const auto stats=field.evaluate(h,true,0);const auto values=field.values();
+            double error=0,cross=0,norm=0;
+            for(std::size_t i=0;i<values.size();++i){
+                const auto& position=input.surface[2*i];const double x=position[0],y=position[1],r=std::sqrt(x*x+y*y+14400);
+                const double u=std::atan2(x,120)/.02,v=std::atan2(-y,120)/.035;
+                const double rate=500*std::exp(-.5*(u*u+v*v))*14400/(r*r)*120/r;
+                double tau=input.initialHistorySeconds,last=0,predicted=0;
+                for(const auto& e:input.events){tau=tau*std::exp(-(e[2]-last)/h.coolingTimeSeconds)
+                    +h.coolingTimeSeconds*(-std::expm1(-e[1]/h.coolingTimeSeconds))*std::clamp(rate/500,0.0,1.0);
+                    predicted+=rate*e[1]*(1+amplitude*(std::exp(-tau/h.historyScaleSeconds)-std::exp(-.5)));last=e[2];}
+                if(std::abs(values[i]-predicted)>std::max(1e-8,std::abs(predicted)*2e-5))return false;
+                const double residual=values[i]-input.observedUm[i];error+=residual*residual;
+                cross+=values[i]*input.observedUm[i];norm+=values[i]*values[i];
+            }
+            if(std::abs(stats.squaredError-error)>1e-9*std::max(1.0,error)
+                || std::abs(stats.cross-cross)>1e-9*std::max(1.0,cross)
+                || std::abs(stats.norm-norm)>1e-9*std::max(1.0,norm))return false;
+            if(original.empty())original=values;else if(amplitude==.6 && values!=original)return false;
+            const auto probes=field.values({0,130,258});if(probes!=std::vector<double>{values[0],values[130],values[258]})return false;
+        }
+        std::vector<std::array<double,4>> points;
+        for(int i=0;i<259;++i)points.push_back({{.003*((i%23)-11),.005*((i/23)-5),1e-4,1.0+.1*(i%7)}});
+        OpenGLProbabilityObjective objective(points,2,.04,.06,1.6,kernels);
+        const std::vector<double> parameters{.1,-.2,.2,-.1,-.4,.3,-.2,.1,.5};
+        const auto cpu=[&](const std::vector<double>& p){
+            std::vector<double> values;double normalization=0;
+            for(const auto& point:points){double value=0;
+                for(int k=0;k<2;++k){const int offset=k?4:0;
+                    const double x=(point[0]-p[offset]*.04)*std::exp(-p[offset+2])/.04;
+                    const double y=(point[1]-p[offset+1]*.06)*std::exp(-p[offset+3])/.06;
+                    value+=std::exp((k?p[8]:0)-.5*(x*x+y*y));}
+                values.push_back(value);normalization+=point[2]*value;}
+            double loss=0;for(std::size_t i=0;i<values.size();++i){const double r=values[i]/normalization-points[i][3];loss+=r*r;}
+            return loss/(points.size()*1.6*1.6);
+        };
+        std::vector<double> gradient;const double loss=objective.evaluate(parameters,&gradient);
+        if(std::abs(loss-cpu(parameters))>1e-10*loss)return false;
+        for(std::size_t j=0;j<parameters.size();++j){auto a=parameters,b=parameters;a[j]+=1e-6;b[j]-=1e-6;
+            const double numeric=(cpu(a)-cpu(b))/2e-6;
+            if(std::abs(gradient[j]-numeric)>1e-5*std::max(1.0,std::abs(numeric)))return false;}
+        OpenGLProbabilityObjective thickness(points,2,.04,.06,1.6,kernels,true);
+        const auto thicknessCpu=[&](const std::vector<double>& p){
+            double cross=0,norm=0;std::vector<double> units;
+            for(const auto& point:points){double pattern=0;
+                for(int k=0;k<2;++k){const int offset=k?4:0;
+                    const double x=(point[0]-p[offset]*.04)*std::exp(-p[offset+2])/.04;
+                    const double y=(point[1]-p[offset+1]*.06)*std::exp(-p[offset+3])/.06;
+                    pattern+=std::exp((k?p[8]:0)-.5*(x*x+y*y));}
+                const double unit=point[2]*pattern;units.push_back(unit);
+                cross+=unit*point[3];norm+=unit*unit;}
+            const double amplitude=std::max(0.0,cross/norm);double squared=0;
+            for(std::size_t i=0;i<units.size();++i){const double r=amplitude*units[i]-points[i][3];squared+=r*r;}
+            return squared/(points.size()*1.6*1.6);
+        };
+        std::vector<double> thicknessGradient;const double thicknessLoss=thickness.evaluate(parameters,&thicknessGradient);
+        if(std::abs(thicknessLoss-thicknessCpu(parameters))>1e-10*std::max(1.0,thicknessLoss))return false;
+        for(std::size_t j=0;j<parameters.size();++j){auto a=parameters,b=parameters;a[j]+=1e-6;b[j]-=1e-6;
+            const double numeric=(thicknessCpu(a)-thicknessCpu(b))/2e-6;
+            if(std::abs(thicknessGradient[j]-numeric)>1e-5*std::max(1.0,std::abs(numeric)))return false;}
+        return true;
+    }
 }
 
 int main(int argc, char** argv)
@@ -502,12 +632,14 @@ int main(int argc, char** argv)
         std::cerr << "Checking online accumulation..." << std::endl;
         return verifyContinuousHistory(false) && verifyContinuousHistory(true)
             && verifyCalibratedEfficiencies(false) && verifyCalibratedEfficiencies(true)
+            && verifyRestrictedReceivers(false) && verifyRestrictedReceivers(true)
+            && verifyShadowedHeatHistory(false) && verifyShadowedHeatHistory(true)
             && paused && complete && spatial && verifyOnlineAccumulation()
             && verifyLiveOnlineToolDirections()
             && verifyOnlineBatchPartition(false) && verifyOnlineBatchPartition(true)
             && verifyShortIntervalExposure() && verifyOnlineSnapshot()
             && verifyGpuDisplaySnapshot()
-            && verifyNarrowFootprintOcclusion() ? 0 : 1;
+            && verifyNarrowFootprintOcclusion() && verifyGpuCalibration() ? 0 : 1;
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

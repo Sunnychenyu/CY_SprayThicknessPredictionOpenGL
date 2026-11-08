@@ -4,6 +4,8 @@
 #include <SprayThicknessPredictionOpenGL/AxisymmetricProfileReduction.h>
 
 #include "OpenGLComputeProgram.h"
+#include "CalibrationComputeShaders.h"
+#include <SprayThicknessPredictionOpenGL/OpenGLCalibrationEvaluator.h>
 #include "DynamicSurfaceGpu.h"
 #include "GpuMeshSampling.h"
 #include "PaperGaussianHistoryShader.h"
@@ -409,6 +411,26 @@ namespace spraythickness::opengl
             std::uint64_t triangleCount = 0;
         };
 
+        // The receiver subset never removes occluders from the workpiece.
+        // Shared by exact and spatial-filtered offline dispatches.
+        std::vector<std::uint32_t> makePredictionVertexIndices(const ThicknessPredictionTask& task)
+        {
+            auto indices = task.options.spatialFiltering.predictionVertexIndices;
+            if(indices.empty()) {
+                indices.resize(task.workpiece.samples.size());
+                std::iota(indices.begin(), indices.end(), 0U);
+            } else {
+                std::vector<std::uint8_t> seen(task.workpiece.samples.size(), 0U);
+                for(const auto index : indices) {
+                    if(index >= seen.size() || seen[index]) {
+                        throw std::runtime_error("Restricted prediction vertex list is invalid.");
+                    }
+                    seen[index] = 1U;
+                }
+            }
+            return indices;
+        }
+
         std::uint64_t hashWorkpieceGeometry(
             const sprayworkpiece::WorkpieceModel& workpiece)
         {
@@ -788,9 +810,14 @@ namespace spraythickness::opengl
             bool enableBvh,
             bool enableHistory,
             std::size_t vertexCount,
-            double candidateRatio)
+            double candidateRatio,
+            std::size_t componentCount)
         {
+            // A profile measured for one Gaussian is not valid for a mixture.
             std::uint64_t key = capabilities.fingerprint;
+            const std::uint32_t policyVersion=2;
+            appendHashBytes(key,&policyVersion,sizeof(policyVersion));
+            appendHashBytes(key,&componentCount,sizeof(componentCount));
             const std::uint8_t flags[] = {
                 static_cast<std::uint8_t>(spatialFiltering),
                 static_cast<std::uint8_t>(enableBvh),
@@ -822,7 +849,6 @@ namespace spraythickness::opengl
                 if(cached > 0) {
                     m_currentBatch = cached;
                     m_bestBatch = cached;
-                    m_cached = true;
                     m_wasCached = true;
                 } else {
                     m_currentBatch = std::clamp(
@@ -850,9 +876,18 @@ namespace spraythickness::opengl
                 std::uint64_t workItems,
                 double elapsedMilliseconds)
             {
-                if(m_cached || elapsedMilliseconds <= 0.0) {
+                if(elapsedMilliseconds <= 0.0) {
                     return;
                 }
+                if(elapsedMilliseconds>100.0 && batchSize>1){
+                    m_maximumBatch=std::min(m_maximumBatch,std::max(std::size_t(1),batchSize/2));
+                    m_currentBatch=m_maximumBatch;m_bestBatch=std::min(m_bestBatch,m_maximumBatch);
+                    m_bestThroughput=0.0;m_measurements=0;m_cached=false;
+                    return;
+                }
+                // Long validations can slow down after warm-up or GPU contention.
+                // Keep a cached batch only while later measurements remain bounded.
+                if(m_cached)return;
                 const double throughput = static_cast<double>(workItems)
                     / elapsedMilliseconds;
                 if(throughput > m_bestThroughput) {
@@ -867,15 +902,7 @@ namespace spraythickness::opengl
                     m_cached = true;
                     return;
                 }
-                if(elapsedMilliseconds > 500.0) {
-                    m_currentBatch = std::max<std::size_t>(
-                        1,
-                        m_currentBatch / 2);
-                } else {
-                    m_currentBatch = std::min(
-                        m_maximumBatch,
-                        m_currentBatch * 2);
-                }
+                m_currentBatch = std::min(m_maximumBatch, m_currentBatch * 2);
             }
 
             bool wasCached() const { return m_wasCached; }
@@ -1282,6 +1309,14 @@ namespace spraythickness::opengl
             }
             cacheHit = false;
             return built;
+        }
+
+        std::size_t boundedPredictionBatch(const ThicknessPredictionTask& task,std::size_t vertices) {
+            const std::size_t components=std::max(std::size_t(1),task.options.deposition.gaussianComponents.size());
+            const std::size_t cost=components+(task.options.enableHistoryCorrection?4:0)
+                +(task.options.enableBvhOcclusion?16:0);
+            return std::clamp(std::size_t(64*1024*1024)/std::max(std::size_t(1),vertices)/cost,
+                std::size_t(1),std::size_t(256));
         }
 
         std::size_t computeAdaptiveBvhBatchSize(
@@ -1805,21 +1840,12 @@ namespace spraythickness::opengl
                 }
                 predictionWarnings.push_back(
                     "Axisymmetric profile prediction maps sampled profile thickness back to the complete mesh.");
-            } else if(!task.options.spatialFiltering.predictionVertexIndices.empty()) {
-                predictionVertexIndices = task.options.spatialFiltering.predictionVertexIndices;
-                std::vector<std::uint8_t> seen(task.workpiece.samples.size(), 0U);
-                for(const std::uint32_t vertex : predictionVertexIndices) {
-                    if(vertex >= task.workpiece.samples.size() || seen[vertex] != 0U) {
-                        throw std::runtime_error(
-                            "Restricted spatial prediction vertex list is invalid.");
-                    }
-                    seen[vertex] = 1U;
-                }
-                predictionWarnings.push_back(
-                    "Restricted local vertex prediction was used; vertices outside the selected region remain zero.");
             } else {
-                predictionVertexIndices.resize(task.workpiece.samples.size());
-                std::iota(predictionVertexIndices.begin(), predictionVertexIndices.end(), 0U);
+                predictionVertexIndices = makePredictionVertexIndices(task);
+                if(!task.options.spatialFiltering.predictionVertexIndices.empty()) {
+                    predictionWarnings.push_back(
+                        "Restricted local vertex prediction was used; vertices outside the selected region remain zero.");
+                }
             }
             if(task.options.periodicLocal.enabled) {
                 reportProgress(execution, 0.02, "Building periodic base-sector mapping");
@@ -2178,16 +2204,16 @@ namespace spraythickness::opengl
                 sizeof(SprayGpuSample),
                 maximumBlockSize);
             const std::size_t requestedBatch = task.options.trajectoryBatchSize;
-            const std::size_t maximumBatch = std::max<std::size_t>(1, std::min(
+            const std::size_t maximumBatch = std::max<std::size_t>(1, std::min({
                 requestedBatch == 0 ? allSpraySamples.size() : requestedBatch,
-                allSpraySamples.size()));
+                allSpraySamples.size(),boundedPredictionBatch(task,predictionVertexCount)}));
             const std::uint64_t batchProfileKey = makeBatchProfileKey(
                 capabilities,
                 true,
                 task.options.enableBvhOcclusion,
                 task.options.enableHistoryCorrection,
                 predictionVertexCount,
-                candidateRatio);
+                candidateRatio,task.options.deposition.gaussianComponents.size());
             AdaptiveBatchSelector batchSelector(
                 batchProfileKey,
                 maximumBatch,
@@ -2258,7 +2284,9 @@ namespace spraythickness::opengl
                     batchCellOffsets[cell + 1] = static_cast<std::uint32_t>(
                         batchCandidateSprayIndices.size());
                 }
-                const bool measuringBatch = batchSelector.measuring();
+                // Every 64th batch follows an existing queue-drain boundary.
+                // Its duration therefore excludes earlier asynchronous batches.
+                const bool measuringBatch = batchSelector.measuring() || batch % 64 == 0;
                 const auto batchStart = std::chrono::steady_clock::now();
                 candidateSprayBuffer.update(
                     batchCandidateSprayIndices.empty()
@@ -2270,9 +2298,11 @@ namespace spraythickness::opengl
                 cellOffsetBuffer.update(
                     batchCellOffsets.data(),
                     batchCellOffsets.size() * sizeof(std::uint32_t));
+                // Candidate indices address the full buffer, but history must
+                // advance only to this batch end, not the end of the trajectory.
                 glUniform1i(
                     sprayPointCountLocation,
-                    static_cast<int>(allSpraySamples.size()));
+                    static_cast<int>(end));
                 glDispatchCompute(
                     static_cast<unsigned int>((predictionVertexCount + 255) / 256),
                     1,
@@ -2913,9 +2943,9 @@ void main() {
             static_cast<int>(task.workpiece.samples.size()),
             static_cast<int>(task.workpiece.samples.size()), false);
         const int sprayPointCountLocation = program.uniformLocation("sprayPointCount");
-        const std::size_t maximumBatch = std::max<std::size_t>(1,
-            static_cast<std::size_t>(capabilities.maximumBlockSize)
-                / sizeof(SprayGpuSample));
+        const std::size_t maximumBatch = std::max<std::size_t>(1, std::min(
+            static_cast<std::size_t>(capabilities.maximumBlockSize) / sizeof(SprayGpuSample),
+            boundedPredictionBatch(task, task.workpiece.samples.size())));
         double uploadMilliseconds = 0.0;
         double dispatchMilliseconds = 0.0;
         double gpuMilliseconds = 0.0;
@@ -3260,8 +3290,7 @@ void main() {
             }
         }
         std::vector<SprayGpuSample> spraySamples = allSpraySamples;
-        std::vector<std::uint32_t> predictionVertexIndices(task.workpiece.samples.size());
-        std::iota(predictionVertexIndices.begin(), predictionVertexIndices.end(), 0U);
+        auto predictionVertexIndices = makePredictionVertexIndices(task);
         PeriodicSectorReduction periodicReduction;
         bool periodicReductionApplied = false;
         double mappingMilliseconds = 0.0;
@@ -3409,7 +3438,7 @@ void main() {
             task,
             static_cast<int>(task.workpiece.samples.size()),
             static_cast<int>(predictionVertexIndices.size()),
-            periodicReductionApplied);
+            periodicReductionApplied || !task.options.spatialFiltering.predictionVertexIndices.empty());
         meshSampling.configure(program);
         checkOpenGlErrors("compute program setup");
 
@@ -3478,14 +3507,14 @@ void main() {
         const std::size_t maximumBatch = std::max<std::size_t>(1, std::min({
             requestedBatch == 0 ? spraySamples.size() : requestedBatch,
             maximumSamples,
-            spraySamples.size()}));
+            spraySamples.size(),boundedPredictionBatch(task,predictionVertexCount)}));
         const std::uint64_t batchProfileKey = makeBatchProfileKey(
             capabilities,
             false,
             task.options.enableBvhOcclusion,
             task.options.enableHistoryCorrection,
             predictionVertexCount,
-            1.0) ^ (task.options.dynamicSurface.enabled ? 0x44594e414d494301ULL : 0ULL);
+            1.0,task.options.deposition.gaussianComponents.size()) ^ (task.options.dynamicSurface.enabled ? 0x44594e414d494301ULL : 0ULL);
         AdaptiveBatchSelector batchSelector(
             batchProfileKey,
             maximumBatch,
@@ -3643,7 +3672,8 @@ void main() {
                         / static_cast<double>(spraySamples.size()),
                     batchStartMessage.c_str());
             }
-            const bool measuringBatch = batchSelector.measuring();
+            // Periodic timing follows the previous eight-batch queue drain.
+            const bool measuringBatch = batchSelector.measuring() || batch % 64 == 0;
             const auto batchStart = std::chrono::steady_clock::now();
             sprayBuffer.update(spraySamples.data() + begin, count * sizeof(SprayGpuSample));
             glUniform1i(sprayPointCountLocation, static_cast<int>(count));
@@ -3654,9 +3684,8 @@ void main() {
                 1,
                 1);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-            // Keep the legacy predictor's command-queue pacing. Most batches
-            // are flushed asynchronously; every eighth batch establishes a
-            // completed GPU boundary before more work is queued.
+            // Batches have a component-aware work ceiling. Limit queued batches
+            // too, so validation cannot monopolize the display GPU for seconds.
             if(measuringBatch || (batch + 1) % 8 == 0
                 || completedSprayPoints == spraySamples.size()) {
                 glFinish();
@@ -3750,5 +3779,230 @@ void main() {
                 + std::to_string(totalMilliseconds) + " ms, adaptive batch "
                 + std::to_string(batchSelector.selectedBatch())).c_str());
         return result;
+    }
+
+    namespace {
+    void calibrationWait(const std::function<void()>& checkpoint) {
+        GLsync fence=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);
+        if(!fence)throw std::runtime_error("Cannot synchronize GPU calibration.");
+        struct Guard {GLsync fence;~Guard(){glDeleteSync(fence);}} guard{fence};
+        for(;;){
+            if(checkpoint)checkpoint();
+            const auto status=glClientWaitSync(fence,GL_SYNC_FLUSH_COMMANDS_BIT,1000000);
+            if(status==GL_ALREADY_SIGNALED || status==GL_CONDITION_SATISFIED)break;
+            if(status==GL_WAIT_FAILED)throw std::runtime_error("GPU calibration synchronization failed.");
+        }
+    }
+    void calibrationDouble(const OpenGLComputeProgram& p,const char* name,double value){
+        glUniform1d(p.uniformLocation(name),value);
+    }
+    void calibrationDispatch(GLuint x,GLuint y=1){
+        glDispatchCompute(x,y,1);glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT|GL_BUFFER_UPDATE_BARRIER_BIT);
+    }
+    void calibrationAllocate(GpuBuffer& buffer,std::size_t bytes){
+        GLint limit=0;glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE,&limit);
+        if(bytes>std::size_t(limit))throw std::runtime_error("Calibration buffer exceeds the GPU storage limit; no fitting points were discarded.");
+        buffer.upload(0,nullptr,std::max(bytes,std::size_t(8)),GL_DYNAMIC_COPY);
+    }
+    std::string calibrationRateShader(){
+        auto source=makePaperGaussianHistoryShader(false,false);
+        source.insert(source.find('\n')+1,"#define THICKNESS_FIT_CACHE 1\n");return source;
+    }
+    }
+    class OpenGLCalibrationKernels {
+    public:
+        OpenGLComputeProgram rate{calibrationRateShader().c_str(),"Calibration spatial rates"};
+        OpenGLComputeProgram field{calibrationFieldShader().c_str(),"Calibration thermal replay"};
+        OpenGLComputeProgram statistics{kCalibrationStatistics,"Calibration field statistics"};
+        OpenGLComputeProgram reduce{kCalibrationReduce,"Calibration scalar reduction"};
+        OpenGLComputeProgram gather{kCalibrationGather,"Calibration field gather"};
+        OpenGLComputeProgram probability{probabilityValuesShader().c_str(),"Probability analytic derivatives"};
+        OpenGLComputeProgram probabilityReduction{kProbabilityReduction,"Probability normalization and residual"};
+        OpenGLComputeProgram gradient{kProbabilityGradient,"Probability normalized gradient"};
+    };
+    std::shared_ptr<OpenGLCalibrationKernels> createCalibrationKernels(){
+        if(glGetString(GL_VERSION)==nullptr || glDispatchCompute==nullptr)
+            throw std::runtime_error("An OpenGL 4.3 compute context is required for calibration.");
+        return std::make_shared<OpenGLCalibrationKernels>();
+    }
+    namespace {
+    void calibrationReduce(OpenGLCalibrationKernels& kernels,const GpuBuffer& partial,GpuBuffer& output,
+        int groups,int columns,int maxColumn=-1){
+        auto& program=kernels.reduce;program.use();partial.bind(0);output.bind(1);
+        program.setInt("groups",groups);program.setInt("maxColumn",maxColumn);calibrationDispatch(GLuint(columns));
+    }
+    }
+    struct OpenGLCalibrationField::Impl {
+        std::shared_ptr<OpenGLCalibrationKernels> kernels;
+        ThicknessPredictionTask task;
+        GpuBuffer surface,spray,events,coldEvents,rates,observed,state,output,partial,result,decay;
+        std::vector<std::array<double,4>> eventData;
+        int tileSize=0,cachedBegin=-1;
+        double cachedCooling=0;
+        int count=0,poses=0,eventCount=0,coldEventCount=0,groups=0;
+        double initial=0;
+        void cacheRates(int first,int end,const std::function<void()>& checkpoint) {
+            if(cachedBegin==first)return;
+            auto& program=kernels->rate;program.use();surface.bind(0);spray.bind(2);rates.bind(11);
+            configureProgram(program,task,count,count,false);program.setInt("sprayPointCount",poses);
+            program.setInt("fitVertexBegin",first);program.setInt("fitVertexEnd",end);
+            const int batch=std::max(1,std::min(256,1048576/(end-first)));
+            for(int pose=0;pose<poses;pose+=batch){
+                if(checkpoint)checkpoint();
+                program.setInt("fitPoseBegin",pose);program.setInt("fitPoseEnd",std::min(poses,pose+batch));
+                calibrationDispatch(GLuint((end-first+255)/256));
+                if((pose/batch+1)%8==0)calibrationWait(checkpoint);
+            }
+            calibrationWait(checkpoint);cachedBegin=first;
+        }
+    };
+    OpenGLCalibrationField::OpenGLCalibrationField(const PaperGaussianParameters& model,
+        const CalibrationFieldInput& input,const std::function<void()>& checkpoint,
+        std::shared_ptr<OpenGLCalibrationKernels> kernels):m_impl(std::make_unique<Impl>())
+    {
+        auto& s=*m_impl;s.kernels=kernels?std::move(kernels):createCalibrationKernels();
+        s.count=int(input.observedUm.size());s.poses=int(input.spray.size()/5);s.eventCount=int(input.events.size());
+        if(s.count<=0 || s.poses<=0 || s.eventCount<=0 || input.surface.size()!=2*input.observedUm.size())
+            throw std::invalid_argument("Invalid calibration field dimensions.");
+        s.groups=std::min(128,(s.count+127)/128);s.initial=input.initialHistorySeconds;s.eventData=input.events;
+        s.task.options.deposition=model;s.task.options.enableBvhOcclusion=false;s.task.options.enableHistoryCorrection=false;
+        const auto upload=[](GpuBuffer& buffer,const auto& values){
+            calibrationAllocate(buffer,values.size()*sizeof(values.front()));buffer.update(values.data(),values.size()*sizeof(values.front()));};
+        upload(s.surface,input.surface);upload(s.spray,input.spray);upload(s.events,input.events);upload(s.observed,input.observedUm);
+        // Cold exposure is order independent. Combine repeated spatial poses
+        // once, avoiding thousands of identical point-spray additions.
+        std::vector<double> duration(s.poses,0.0);
+        for(const auto& event:input.events){
+            const int pose=int(event[0]);
+            if(pose<0 || pose>=s.poses || !(event[1]>0))throw std::invalid_argument("Invalid calibration trajectory event.");
+            duration[pose]+=event[1];
+        }
+        std::vector<std::array<double,4>> coldEvents;
+        for(int i=0;i<s.poses;++i)if(duration[i]>0)coldEvents.push_back({{double(i),duration[i],duration[i],0}});
+        s.coldEventCount=int(coldEvents.size());upload(s.coldEvents,coldEvents);
+        calibrationAllocate(s.state,std::size_t(s.count)*4*sizeof(double));calibrationAllocate(s.output,std::size_t(s.count)*4*sizeof(double));
+        calibrationAllocate(s.partial,std::size_t(s.groups)*9*sizeof(double));calibrationAllocate(s.result,9*sizeof(double));
+        GLint maximum=0;glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE,&maximum);
+        // Cache each unique pose once per vertex tile, including full-resolution maps.
+        // Repeated scans replay this cache without reevaluating all Gaussian components.
+        const auto capacity=std::min(std::size_t(maximum),std::size_t(64*1024*1024));
+        const auto rowBytes=std::size_t(s.poses)*4*sizeof(float);
+        if(rowBytes>capacity)throw std::runtime_error("Calibration trajectory exceeds the spatial cache limit.");
+        s.tileSize=int(std::min(std::size_t(s.count),capacity/rowBytes));
+        calibrationAllocate(s.rates,std::size_t(s.tileSize)*rowBytes);
+        calibrationAllocate(s.decay,std::size_t(s.eventCount)*2*sizeof(double));
+        if(s.tileSize==s.count)s.cacheRates(0,s.count,checkpoint);
+        checkOpenGlErrors("calibration field preparation");
+    }
+    OpenGLCalibrationField::~OpenGLCalibrationField()=default;
+    CalibrationFieldStatistics OpenGLCalibrationField::evaluate(const HeatHistoryParameters& history,bool enabled,int mode,
+        const std::function<void()>& checkpoint)
+    {
+        auto& s=*m_impl;auto& program=s.kernels->field;
+        enabled=(enabled && history.correctionAmplitude!=0.0) || mode==2;
+        const int eventCount=enabled?s.eventCount:s.coldEventCount;
+        if(enabled && s.cachedCooling!=history.coolingTimeSeconds){
+            // These two coefficients depend only on event timing and cooling,
+            // not on vertices or the fitted history scale.
+            std::vector<std::array<double,2>> coefficients(s.eventCount);double last=0;
+            for(int i=0;i<s.eventCount;++i){const auto& event=s.eventData[i];
+                coefficients[i]={{std::exp(-std::max(0.0,event[2]-last)/history.coolingTimeSeconds),
+                    -history.coolingTimeSeconds*std::expm1(-event[1]/history.coolingTimeSeconds)}};
+                last=event[2];
+            }
+            s.decay.update(coefficients.data(),coefficients.size()*sizeof(coefficients.front()));
+            s.cachedCooling=history.coolingTimeSeconds;
+        }
+        for(int vertex=0;vertex<s.count;vertex+=s.tileSize){
+            const int end=std::min(s.count,vertex+s.tileSize),count=end-vertex;
+            s.cacheRates(vertex,end,checkpoint);program.use();
+            configureProgram(program,s.task,s.count,s.count,false);
+            s.surface.bind(0);s.spray.bind(2);s.state.bind(3);s.output.bind(4);s.rates.bind(11);
+            (enabled?s.events:s.coldEvents).bind(12);s.decay.bind(13);
+            program.setInt("vertexBegin",vertex);program.setInt("vertexEnd",end);
+            program.setInt("sprayPointCount",s.poses);program.setInt("ratesCached",1);
+            program.setInt("heatEnabled",enabled?1:0);program.setInt("continuous",history.continuousInput?1:0);program.setInt("mode",mode);
+            calibrationDouble(program,"initialTau",s.initial);calibrationDouble(program,"heatAmplitude",history.correctionAmplitude);
+            calibrationDouble(program,"heatScale",history.historyScaleSeconds);
+            calibrationDouble(program,"referenceQ",std::exp(-history.referenceHistorySeconds/history.historyScaleSeconds));
+            calibrationDouble(program,"referenceRate",std::max(1e-20,history.referencePeakRateMillimetersPerSecond*1000));
+            calibrationDouble(program,"threshold",history.activityThresholdRatio);
+            const int batch=std::max(1,std::min(256,4194304/count));
+            for(int first=0;first<eventCount;first+=batch){
+                if(checkpoint)checkpoint();
+                program.setInt("eventBegin",first);program.setInt("eventEnd",std::min(eventCount,first+batch));
+                calibrationDispatch(GLuint((count+255)/256));
+                if((first/batch+1)%8==0)calibrationWait(checkpoint);
+            }
+            calibrationWait(checkpoint);
+        }
+        auto& statistics=s.kernels->statistics;statistics.use();s.output.bind(0);s.observed.bind(1);s.partial.bind(2);
+        statistics.setInt("count",s.count);statistics.setInt("groups",s.groups);calibrationDispatch(GLuint(s.groups),9);
+        calibrationReduce(*s.kernels,s.partial,s.result,s.groups,9,3);calibrationWait(checkpoint);
+        std::array<double,9> values{};s.result.download(values.data(),sizeof(values));
+        for(double value:values)if(!std::isfinite(value))throw std::runtime_error("Non-finite GPU calibration statistics.");
+        checkOpenGlErrors("calibration field evaluation");
+        return {values[0],values[1],values[2],values[3],{{values[4],values[5],values[6],values[7],values[8]}}};
+    }
+    std::vector<double> OpenGLCalibrationField::values(const std::vector<int>& indices){
+        auto& s=*m_impl;for(int i:indices)if(i<0 || i>=s.count)throw std::out_of_range("Calibration probe index.");
+        const int count=indices.empty()?s.count:int(indices.size());
+        GpuBuffer selected,result;calibrationAllocate(selected,std::max(indices.size()*sizeof(int),std::size_t(4)));
+        if(!indices.empty())selected.update(indices.data(),indices.size()*sizeof(int));
+        calibrationAllocate(result,std::size_t(count)*sizeof(double));
+        auto& program=s.kernels->gather;program.use();s.output.bind(0);selected.bind(1);result.bind(2);
+        program.setInt("count",count);program.setInt("subset",indices.empty()?0:1);calibrationDispatch(GLuint((count+127)/128));
+        std::vector<double> values(count);result.download(values.data(),values.size()*sizeof(double));return values;
+    }
+    struct OpenGLProbabilityObjective::Impl {
+        std::shared_ptr<OpenGLCalibrationKernels> kernels;
+        GpuBuffer points,parameters,values,normalization,partial,result;
+        int count=0,components=0,dimensions=0,groups=0;
+        double scaleU=0,scaleV=0,inverseLossScale=0;
+        bool fitThickness=false;
+    };
+    OpenGLProbabilityObjective::OpenGLProbabilityObjective(const std::vector<std::array<double,4>>& points,int components,
+        double scaleU,double scaleV,double peak,std::shared_ptr<OpenGLCalibrationKernels> kernels,
+        bool fitThickness):m_impl(std::make_unique<Impl>())
+    {
+        auto& s=*m_impl;s.kernels=kernels?std::move(kernels):createCalibrationKernels();
+        if(points.empty() || components<1 || components>16 || !(scaleU>0 && scaleV>0 && peak>0))
+            throw std::invalid_argument("Invalid probability compute input.");
+        s.count=int(points.size());s.components=components;s.dimensions=5*components-1;s.groups=std::min(128,(s.count+127)/128);
+        s.scaleU=scaleU;s.scaleV=scaleV;s.inverseLossScale=1/(s.count*peak*peak);s.fitThickness=fitThickness;
+        calibrationAllocate(s.points,points.size()*sizeof(points.front()));s.points.update(points.data(),points.size()*sizeof(points.front()));
+        calibrationAllocate(s.parameters,std::size_t(s.dimensions)*sizeof(double));
+        calibrationAllocate(s.values,points.size()*std::size_t(s.dimensions+1)*sizeof(double));
+        calibrationAllocate(s.normalization,std::size_t(s.dimensions+1)*sizeof(double));
+        calibrationAllocate(s.partial,std::size_t(s.groups)*std::size_t(s.dimensions+2)*sizeof(double));
+        calibrationAllocate(s.result,std::size_t(s.dimensions+2)*sizeof(double));
+    }
+    OpenGLProbabilityObjective::~OpenGLProbabilityObjective()=default;
+    double OpenGLProbabilityObjective::evaluate(const std::vector<double>& parameters,std::vector<double>* gradient,
+        const std::function<void()>& checkpoint)
+    {
+        auto& s=*m_impl;if(parameters.size()!=std::size_t(s.dimensions))throw std::invalid_argument("Probability parameter count mismatch.");
+        if(checkpoint)checkpoint();s.parameters.update(parameters.data(),parameters.size()*sizeof(double));
+        auto& probability=s.kernels->probability;probability.use();s.points.bind(0);s.parameters.bind(1);s.values.bind(2);
+        probability.setInt("count",s.count);probability.setInt("components",s.components);probability.setInt("dimensions",s.dimensions);
+        calibrationDouble(probability,"scaleU",s.scaleU);calibrationDouble(probability,"scaleV",s.scaleV);calibrationDispatch(GLuint((s.count+127)/128));
+        auto& reduction=s.kernels->probabilityReduction;
+        for(int phase=0;phase<2;++phase){
+            reduction.use();s.points.bind(0);s.values.bind(1);s.normalization.bind(2);s.partial.bind(3);
+            reduction.setInt("count",s.count);reduction.setInt("dimensions",s.dimensions);reduction.setInt("groups",s.groups);
+            reduction.setInt("phase",phase);reduction.setInt("fitThickness",s.fitThickness?1:0);
+            calibrationDouble(reduction,"inverseLossScale",s.inverseLossScale);
+            const int columns=phase?s.dimensions+2:(s.fitThickness?2:s.dimensions+1);
+            calibrationDispatch(GLuint(s.groups),GLuint(columns));
+            calibrationReduce(*s.kernels,s.partial,phase?s.result:s.normalization,s.groups,columns);
+        }
+        if(!s.fitThickness){auto& finish=s.kernels->gradient;finish.use();s.normalization.bind(0);s.result.bind(1);
+            finish.setInt("dimensions",s.dimensions);calibrationDispatch(1);}
+        calibrationWait(checkpoint);std::vector<double> result(s.dimensions+2);s.result.download(result.data(),result.size()*sizeof(double));
+        std::array<double,2> totals{};s.normalization.download(totals.data(),(s.fitThickness?2:1)*sizeof(double));
+        const double normalization=s.fitThickness?totals[1]:totals[0];
+        if(!(normalization>1e-300)){if(gradient)gradient->assign(s.dimensions,0);return std::numeric_limits<double>::infinity();}
+        for(double value:result)if(!std::isfinite(value))throw std::runtime_error("Non-finite GPU probability objective.");
+        if(gradient)gradient->assign(result.begin()+2,result.end());checkOpenGlErrors("probability objective");return result[0];
     }
 }

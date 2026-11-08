@@ -296,6 +296,19 @@ void evaluateThicknessVertex() {
         accumulated += baseThickness * factor * densityThicknessScale(sprayDistance,angleDegrees);
         lastTime = currentTime;
     }
+#if THICKNESS_ENABLE_HISTORY
+    // Occluded/back-facing intervals add neither coating nor direct heat.
+    // Advance existing history to the batch end even if no vertex contribution
+    // was accepted. Delayed cooling between visible events remains equivalent.
+    if(sprayPointCount > 0) {
+        int endBase = (sprayPointCount - 1) * 5;
+        float endTime = sprayData[endBase + 4].x
+            + (continuousHistoryInput != 0 ? max(0.0, sprayData[endBase].w) : 0.0);
+        tau *= exp(-max(0.0, endTime - lastTime) / max(coolingTimeSeconds, 1e-6));
+        lastTime = max(lastTime, endTime);
+        factor = correctionFactor(tau);
+    }
+#endif
     thickness[vertex] += accumulated;
     historyTau[vertex] = tau;
     lastUpdateTime[vertex] = lastTime;
