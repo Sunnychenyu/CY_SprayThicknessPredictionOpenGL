@@ -51,12 +51,12 @@ inline std::string addCalibratedEfficiencyShader(std::string source){
     rename("calibratedEfficiency","calibratedDensity");rename("[128]","[32]");
     density+=R"GLSL(
 uniform float densityDistanceMinMm,densityDistanceMaxMm,densityAngleMinDegrees,densityAngleMaxDegrees;
-uniform float referenceDensityProduct;
+uniform float referenceDensityProduct,densityMultiplier;
 float densityThicknessScale(float distanceMm,float angleDegrees){
-    if(!useCalibratedDensity)return 1.;
+    if(!useCalibratedDensity)return densityMultiplier;
     float d=calibratedDensity(true,clamp(distanceMm,densityDistanceMinMm,densityDistanceMaxMm));
     float a=calibratedDensity(false,clamp(angleDegrees,densityAngleMinDegrees,densityAngleMaxDegrees));
-    return referenceDensityProduct/max(d*a,1e-12);
+    return densityMultiplier*referenceDensityProduct/max(d*a,1e-12);
 }
 )GLSL";
     const auto at=source.find("vec3 safeNormalize");source.insert(at,std::string(kCalibratedEfficiencyShader)+density);return source;

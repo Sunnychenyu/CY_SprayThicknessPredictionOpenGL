@@ -1757,6 +1757,7 @@ namespace spraythickness::opengl
             if(deposition.useCalibratedEfficiencies) {
                 program.setCalibratedCurves(deposition.distanceEfficiency,deposition.angleEfficiency);
             }
+            program.setFloat("densityMultiplier",float(deposition.densityMultiplier));
             program.setInt("useCalibratedDensity",deposition.useCalibratedDensity?1:0);
             if(deposition.useCalibratedDensity){
                 program.setDensityCurves(deposition.distanceDensity,deposition.angleDensity);
